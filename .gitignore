@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+.playwright-mcp/
+uv.lock
+
+# Virtual environments
+.venv
+
+# Private info
+.env-ssh
+
+# Test artifacts
+.pytest_cache/
+
+# Deploy artifacts
+target/
+
+# macOS
+.DS_Store
+
+# Personal project skills
+.agents/skills/

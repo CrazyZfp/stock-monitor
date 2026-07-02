@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock Monitor Admin</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%231f2937'/%3E%3Cpath d='M6 24 L12 16 L18 20 L26 8' stroke='%23dc2626' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='26' cy='8' r='2' fill='%23dc2626'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="logo"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#1f2937"/><path d="M6 24 L12 16 L18 20 L26 8" stroke="#dc2626" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="26" cy="8" r="2" fill="#dc2626"/></svg></span>
+    <h1>Stock Monitor</h1>
+  </div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="stocks">监控股票</button>
+    <button class="tab" data-tab="templates">通知模板</button>
+    <button class="tab" data-tab="webhook">Webhook</button>
+    <button class="tab" data-tab="status">状态</button>
+    <div class="latency-info">
+      <span class="latency-dot" id="latency-dot"></span>
+      <span class="latency-label" id="latency-label">—</span>
+    </div>
+  </nav>
+</header>
+
+<main>
+  <!-- ====== 监控股票 ====== -->
+  <section id="tab-stocks" class="tab-content active">
+    <div class="toolbar">
+      <button class="btn btn-primary" id="btn-add-stock">+ 新增股票</button>
+      <button class="btn" id="btn-export">导出配置</button>
+      <label class="btn" for="file-import">导入配置</label>
+      <input type="file" id="file-import" accept="application/json" hidden>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="stocks-table">
+        <thead>
+          <tr>
+            <th>代码</th>
+            <th>名称</th>
+            <th>昵称</th>
+            <th>报价</th>
+            <th>当前涨速</th>
+            <th>时间</th>
+            <th>启用</th>
+            <th>操作</th>
+            <th>做T</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="hint" id="stocks-empty" hidden>暂无监控股票，点击"新增股票"开始</p>
+  </section>
+
+  <!-- ====== 模板 ====== -->
+  <section id="tab-templates" class="tab-content">
+    <div class="placeholder-docs">
+      <p class="hint">支持以下占位符，不存在的占位符会导致保存失败。可写多行，每行一个模板随机选用。</p>
+      <details class="placeholder-fold">
+        <summary class="placeholder-summary">查看占位符说明</summary>
+        <table class="placeholder-table">
+          <thead><tr><th>占位符</th><th>说明</th><th>可用类型</th><th>备注</th></tr></thead>
+          <tbody>
+          <tr><td><code>{name}</code></td><td>官方股票名称</td><td>全部</td><td>不含昵称</td></tr>
+          <tr><td><code>{nickname}</code></td><td>昵称</td><td>全部</td><td>未设置时回退到 <code>{name}</code></td></tr>
+          <tr><td><code>{price}</code></td><td>当前价格</td><td>全部</td><td>格式如 <code>19.80</code></td></tr>
+          <tr><td><code>{threshold}</code></td><td>触发阈值</td><td><code>price_high</code> / <code>price_low</code></td><td>单档绝对价格；其他类型为空</td></tr>
+          <tr><td><code>{daily_change}</code></td><td>当日涨跌幅</td><td>全部</td><td>基于昨收的当日涨跌百分比，格式如 <code>+2.50%</code></td></tr>
+          <tr><td><code>{speed_change}</code></td><td>涨速</td><td><code>surge_up</code> / <code>surge_down</code></td><td>涨速窗口内的涨跌百分比，格式如 <code>+2.50%</code></td></tr>
+          <tr><td><code>{retracement}</code></td><td>回撤百分比</td><td><code>retracement</code></td><td>从最近峰值回落的百分比，格式如 <code>-3.00%</code></td></tr>
+          <tr><td><code>{bounce}</code></td><td>反弹百分比</td><td><code>bounce</code></td><td>从最近谷值回升的百分比，格式如 <code>+3.00%</code></td></tr>
+          <tr><td><code>{time}</code></td><td>涨速窗口（分钟）</td><td>全部</td><td>取自股票配置的"窗口/分"字段</td></tr>
+          <tr><td><code>{tier_index}</code></td><td>档位序号 (1, 2, 3…)</td><td><code>daily_up</code> / <code>daily_down</code></td><td>当日涨跌百分比多档中的第几档</td></tr>
+          <tr><td><code>{tier_threshold}</code></td><td>档位阈值</td><td><code>daily_up</code> / <code>daily_down</code></td><td>该档位的涨跌百分比，格式如 <code>5.00%</code></td></tr>
+          <tr><td><code>{peak_price}</code></td><td>回撤前峰值</td><td><code>retracement</code></td><td>最近一次突破后达到的最高价</td></tr>
+          <tr><td><code>{valley_price}</code></td><td>反弹前谷值</td><td><code>bounce</code></td><td>最近一次跌破后达到的最低价</td></tr>
+          <tr><td><code>{t_type}</code></td><td>做T操作类型</td><td><code>t_sell</code> / <code>t_buy</code></td><td><code>S</code> 表示先卖后买，<code>B</code> 表示先买后卖</td></tr>
+          <tr><td><code>{t_price}</code></td><td>做T事件价格</td><td><code>t_sell</code> / <code>t_buy</code></td><td>添加 S/B 事件时记录的价格</td></tr>
+          <tr><td><code>{t_threshold}</code></td><td>做T百分比</td><td><code>t_sell</code> / <code>t_buy</code></td><td>取自股票配置的做T阈值，格式如 <code>3.00%</code></td></tr>
+        </tbody>
+      </table>
+      </details>
+    </div>
+    <form id="templates-form">
+      <div class="template-row">
+        <div class="form-row">
+          <label>price_high (突破高价阈值)</label>
+          <textarea name="price_high" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="price_high">预览</button>
+          <div class="preview-box" id="preview-price_high" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>price_low (跌破低价阈值)</label>
+          <textarea name="price_low" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="price_low">预览</button>
+          <div class="preview-box" id="preview-price_low" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>daily_up (当日涨幅多档)</label>
+          <textarea name="daily_up" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="daily_up">预览</button>
+          <div class="preview-box" id="preview-daily_up" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>daily_down (当日跌幅多档)</label>
+          <textarea name="daily_down" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="daily_down">预览</button>
+          <div class="preview-box" id="preview-daily_down" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>surge_up (涨速上涨)</label>
+          <textarea name="surge_up" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="surge_up">预览</button>
+          <div class="preview-box" id="preview-surge_up" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>surge_down (涨速下跌)</label>
+          <textarea name="surge_down" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="surge_down">预览</button>
+          <div class="preview-box" id="preview-surge_down" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>retracement (高位回撤)</label>
+          <textarea name="retracement" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="retracement">预览</button>
+          <div class="preview-box" id="preview-retracement" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>bounce (低位反弹)</label>
+          <textarea name="bounce" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="bounce">预览</button>
+          <div class="preview-box" id="preview-bounce" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>t_sell (做T先卖后买，价格下跌 T%)</label>
+          <textarea name="t_sell" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="t_sell">预览</button>
+          <div class="preview-box" id="preview-t_sell" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>t_buy (做T先买后卖，价格上涨 T%)</label>
+          <textarea name="t_buy" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="t_buy">预览</button>
+          <div class="preview-box" id="preview-t_buy" hidden></div>
+        </div>
+      </div>
+      <button class="btn btn-primary" type="submit">保存模板</button>
+    </form>
+  </section>
+
+  <!-- ====== Webhook ====== -->
+  <section id="tab-webhook" class="tab-content">
+    <form id="webhook-form">
+      <div class="form-row">
+        <label>钉钉机器人 Webhook URL</label>
+        <input type="password" name="webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." autocomplete="off">
+        <p class="hint">可从钉钉群机器人设置中获取。空字符串表示不发通知。</p>
+      </div>
+      <div class="form-grid" style="margin-bottom:14px;">
+        <div class="form-row">
+          <label>@ 手机号 (多个用英文逗号分隔)</label>
+          <input name="at_mobiles" placeholder="13800138000,13900139000">
+        </div>
+        <div class="form-row">
+          <label>@ 用户 ID (多个用英文逗号分隔)</label>
+          <input name="at_user_ids" placeholder="user001,user002">
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" type="submit">保存</button>
+      </div>
+    </form>
+
+    <h3 style="margin-top:24px; font-size:15px;">发送测试消息</h3>
+    <form id="test-notify-form">
+      <div class="form-row">
+        <label>自定义消息内容</label>
+        <textarea name="message" rows="3" placeholder="🧪 stock-monitor 测试消息 - 来自 Web UI">🧪 stock-monitor 测试消息 - 来自 Web UI</textarea>
+        <p class="hint">支持 emoji 和换行，发送后会原样推送到 webhook。留空使用上方默认文案。</p>
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" id="btn-test-notify">发送</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ====== 状态 ====== -->
+  <section id="tab-status" class="tab-content">
+    <div class="status-grid" id="status-grid"></div>
+    <details class="calendar-section" id="calendar-section">
+      <summary class="calendar-summary">
+        <span>交易日历</span>
+        <span class="calendar-nav">
+          <button type="button" class="btn btn-sm" id="cal-prev">◀</button>
+          <span id="cal-month-label"></span>
+          <button type="button" class="btn btn-sm" id="cal-next">▶</button>
+        </span>
+      </summary>
+      <div class="calendar-body" id="calendar-body"></div>
+    </details>
+    <div class="actions">
+      <button class="btn" id="btn-sync-holidays">立即同步节假日表</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<!-- ====== 股票编辑对话框 ====== -->
+<dialog id="stock-dialog">
+  <form id="stock-form" method="dialog">
+    <h3 id="stock-dialog-title">新增股票</h3>
+    <div class="form-row">
+      <label>搜索股票</label>
+      <div class="stock-search-wrap">
+        <input id="stock-search-input" placeholder="输入名称或代码搜索..." autocomplete="off">
+        <input name="code" id="stock-code-hidden" type="hidden">
+        <div class="stock-search-dropdown" id="stock-search-dropdown"></div>
+      </div>
+    </div>
+    <div class="form-row code-name-row">
+      <div><label>代码</label><input id="stock-code-display" placeholder="搜索选择后自动填入" readonly></div>
+      <div><label>名称</label><input name="name" id="stock-name-input" placeholder="自动填充或手动输入" required></div>
+    </div>
+    <div class="form-row"><label>昵称 (告警消息里显示，可选)</label><input name="nickname" placeholder="留空则用名称"></div>
+    <div class="form-grid">
+      <div class="form-row"><label>高价阈值 (空=不限)</label><div class="input-with-toggle"><input name="price_high" type="number" step="0.01"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="price_high" data-input="price_high" checked> 通知</label></div></div>
+      <div class="form-row"><label>低价阈值 (空=不限)</label><div class="input-with-toggle"><input name="price_low" type="number" step="0.01"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="price_low" data-input="price_low" checked> 通知</label></div></div>
+      <div class="form-row"><label>涨速阈值 % (窗口内涨跌，空=不限)</label><div class="input-with-toggle"><input name="speed_threshold" type="number" step="0.1"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="surge_up" data-input="speed_threshold" checked> 涨</label><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="surge_down" data-input="speed_threshold" checked> 跌</label></div></div>
+      <div class="form-row"><label>涨速窗口 (分钟)</label><input name="speed_window" type="number" value="5" min="1"></div>
+      <div class="form-row"><label>当日涨幅多档 %</label><div class="input-with-toggle"><input name="daily_change_up" placeholder="如 2,5,8"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="daily_up" data-input="daily_change_up" checked> 通知</label></div></div>
+      <div class="form-row"><label>当日跌幅多档 %</label><div class="input-with-toggle"><input name="daily_change_down" placeholder="如 2,5,8"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="daily_down" data-input="daily_change_down" checked> 通知</label></div></div>
+      <div class="form-row"><label>回撤阈值 % (空=不启用)</label><div class="input-with-toggle"><input name="retracement_threshold" type="number" step="0.1" placeholder="高位回落"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="retracement" data-input="retracement_threshold" checked> 通知</label></div></div>
+      <div class="form-row"><label>反弹阈值 % (空=不启用)</label><div class="input-with-toggle"><input name="bounce_threshold" type="number" step="0.1" placeholder="低位回升"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="bounce" data-input="bounce_threshold" checked> 通知</label></div></div>
+      <div class="form-row"><label>做T阈值 % (空=不启用)</label><div class="input-with-toggle"><input name="t_threshold" type="number" step="0.1" placeholder="S跌/B涨此百分比通知"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="t_sell" data-input="t_threshold" checked> 卖</label><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="t_buy" data-input="t_threshold" checked> 买</label></div></div>
+      <div class="form-row"><label>通知冷却 (分钟)</label><input name="cooldown_minutes" type="number" value="5" min="1"></div>
+      <div class="form-row-checkbox">
+        <label><input type="checkbox" name="t_s_enabled" checked> 启用做S</label>
+        <label><input type="checkbox" name="t_b_enabled" checked> 启用做B</label>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" id="btn-cancel">取消</button>
+      <button type="submit" class="btn btn-primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="t-event-dialog">
+  <form id="t-event-form">
+    <h3 id="t-event-dialog-title"></h3>
+    <div class="form-row">
+      <label>价格</label>
+      <input type="number" step="0.01" id="t-event-price" required>
+    </div>
+    <div class="form-row">
+      <label>目标价格（选填，留空=使用做T阈值）</label>
+      <input type="number" step="0.01" id="t-event-target-price" placeholder="选填">
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" id="t-event-cancel">取消</button>
+      <button type="submit" class="btn btn-primary">确认</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>
