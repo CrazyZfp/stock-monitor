@@ -10,7 +10,7 @@ import requests
 import time
 import json
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import threading
 import logging
 from typing import Dict, List, Optional, Tuple
@@ -71,6 +71,10 @@ class StockMonitor:
         self.bounce_armed: dict[str, bool] = {}
         # 做T事件（运行时 + 持久化存于 config.json）
         self.t_events: dict[str, list[dict]] = {}
+        # 当日已触发的 T 事件 ID 集合
+        self.t_events_triggered: dict[str, set[str]] = {}
+        # 最近一次状态重置日期
+        self._reset_date: Optional[date] = None
 
         # 价格数据延迟（API 时间戳与本地时间之差，秒）
         self._price_latency: Optional[float] = None
@@ -621,8 +625,6 @@ class StockMonitor:
         config = self.stocks[stock_code]
         disabled = set(config.get('disabled_alerts', []))
         threshold = config.get('t_threshold')
-        if threshold is None or threshold <= 0:
-            return
         s_enabled = config.get('t_s_enabled', True)
         b_enabled = config.get('t_b_enabled', True)
         if not s_enabled and not b_enabled:
@@ -647,8 +649,12 @@ class StockMonitor:
                 if target is not None and target > 0:
                     should_trigger = current_price <= target
                 else:
+                    if threshold is None or threshold <= 0:
+                        remaining.append(ev)
+                        continue
                     should_trigger = current_price <= ev_price * (1 - threshold / 100)
                 if should_trigger:
+                    self.t_events_triggered.setdefault(stock_code, set()).add(ev["id"])
                     if 't_sell' not in disabled and self.check_cooldown(stock_code, alert_type):
                         self.send_dingding_notification(
                             self.generate_disguise_message(
@@ -667,8 +673,12 @@ class StockMonitor:
                 if target is not None and target > 0:
                     should_trigger = current_price >= target
                 else:
+                    if threshold is None or threshold <= 0:
+                        remaining.append(ev)
+                        continue
                     should_trigger = current_price >= ev_price * (1 + threshold / 100)
                 if should_trigger:
+                    self.t_events_triggered.setdefault(stock_code, set()).add(ev["id"])
                     if 't_buy' not in disabled and self.check_cooldown(stock_code, alert_type):
                         self.send_dingding_notification(
                             self.generate_disguise_message(
@@ -682,6 +692,24 @@ class StockMonitor:
             remaining.append(ev)
         if len(remaining) != len(events):
             self.t_events[stock_code] = remaining
+
+    def daily_reset(self, stock_t_events: dict[str, list[dict]]):
+        """每日重置所有通知状态，重新加载 T 事件"""
+        self.notification_cooldown.clear()
+        self.price_alert_status.clear()
+        self.price_high_alerted_abs.clear()
+        self.price_low_alerted_abs.clear()
+        self.price_high_alerted_daily.clear()
+        self.price_low_alerted_daily.clear()
+        self.peak_since_high_alert.clear()
+        self.valley_since_low_alert.clear()
+        self.retracement_armed.clear()
+        self.bounce_armed.clear()
+        for code, events in stock_t_events.items():
+            if code in self.t_events:
+                self.t_events[code] = list(events)
+        self.t_events_triggered.clear()
+        logger.info("每日通知状态已重置")
 
     def check_stock_alerts(self, stock_code: str, override_price: float | None = None):
         """检查单个股票的警报条件"""

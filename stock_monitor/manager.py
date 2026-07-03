@@ -56,7 +56,7 @@ class MonitorManager:
             cfg = self.store.get()
             self.monitor = self._build_monitor(cfg)
             self._running = True
-            self.stats["started_at"] = time.time()
+            self.stats["started_at"] = int(time.time())
             self._thread = threading.Thread(
                 target=self._loop, name="stock-monitor-loop", daemon=True
             )
@@ -147,7 +147,7 @@ class MonitorManager:
         return self.store.get()
 
     def status(self) -> dict:
-        return {
+        result = {
             **self.stats,
             "running": self._running,
             "poll_interval_seconds": self.store.get().poll_interval_seconds,
@@ -155,6 +155,13 @@ class MonitorManager:
             "config_path": str(self.store.path),
             "price_latency": self.monitor._price_latency if self.monitor else None,
         }
+        if self.monitor is not None:
+            triggered = self.monitor.t_events_triggered
+            for sd in result["stocks"]:
+                for ev in sd.get("t_events", []):
+                    code = sd.get("code")
+                    ev["triggered"] = code in triggered and ev["id"] in triggered[code]
+        return result
 
     def test_notify(self, message: str = "") -> bool:
         """发一条测试消息到 webhook（空字符串用默认文案）"""
@@ -188,7 +195,7 @@ class MonitorManager:
                 quote = {
                     "price": latest["price"],
                     "change_percent": change,
-                    "as_of": latest["time"].isoformat(),
+                    "as_of": int(latest["time"].timestamp()),
                 }
                 # 当前涨速：speed_window 内最早一笔到当前价的涨跌幅
                 speed_window = getattr(stock, 'speed_window', 5)
@@ -201,7 +208,7 @@ class MonitorManager:
                         surge = (latest["price"] - base_price) / base_price * 100
                         quote["surge_change"] = round(surge, 2)
                         quote["surge_base_price"] = base_price
-                        quote["surge_base_time"] = base["time"].isoformat()
+                        quote["surge_base_time"] = int(base["time"].timestamp())
                 result[stock.code] = quote
             return result
 
@@ -215,7 +222,7 @@ class MonitorManager:
             "type": event_type,
             "price": price,
             "target_price": target_price,
-            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "created_at": int(time.time()),
         }
         with self._lock:
             # 写 config
@@ -282,6 +289,24 @@ class MonitorManager:
                 self.monitor.t_events[code] = [
                     e for e in self.monitor.t_events[code] if e.get("id") != event_id
                 ]
+        return True
+
+    def reset_t_event(self, code: str, event_id: str) -> bool:
+        """重置已触发的 T 事件，使其当日可再次触发"""
+        with self._lock:
+            if self.monitor is None:
+                return False
+            if code in self.monitor.t_events_triggered:
+                self.monitor.t_events_triggered[code].discard(event_id)
+            if code in self.monitor.t_events:
+                if not any(ev.get("id") == event_id for ev in self.monitor.t_events[code]):
+                    cfg = self.store.get()
+                    stock = cfg.find_stock(code)
+                    if stock:
+                        for ev in stock.t_events:
+                            if ev.get("id") == event_id:
+                                self.monitor.t_events[code].append(dict(ev))
+                                return True
         return True
 
     # ===== 内部 =====
@@ -382,6 +407,15 @@ class MonitorManager:
 
                 if sleep_seconds == self.interval_seconds and self.monitor is not None and self.monitor.dingding_webhook:
                     cfg = self.store.get()
+
+                    # 每日状态重置（开盘后首次检查时执行）
+                    today = datetime.now().date()
+                    if self.monitor._reset_date is None or today != self.monitor._reset_date:
+                        t_events_map = {s.code: list(s.t_events) for s in cfg.stocks if s.enabled}
+                        self.monitor.daily_reset(t_events_map)
+                        self.monitor._reset_date = today
+                        logger.info(f"每日监控状态已重置 ({today})")
+
                     self._sync_enabled(cfg)
                     self.monitor._batch_mode = True
                     self.monitor._alert_buffer.clear()
@@ -398,7 +432,7 @@ class MonitorManager:
                                 self.stats["last_error"] = str(e)
                     self.monitor._batch_mode = False
                     self.monitor.flush_alerts()
-                    self.stats["last_check_at"] = time.time()
+                    self.stats["last_check_at"] = int(time.time())
                     self.stats["check_count"] += 1
 
                 for _ in range(int(sleep_seconds)):

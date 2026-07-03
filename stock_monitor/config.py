@@ -10,6 +10,7 @@ import os
 import sys
 import threading
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -106,6 +107,20 @@ class StockConfig:
         speed_win = d.get("speed_window") or d.get("surge_period", 5)
         dc_up = d.get("daily_change_up") or d.get("price_tiers_high", [])
         dc_down = d.get("daily_change_down") or d.get("price_tiers_low", [])
+        # 迁移旧版字符串 created_at → int 时间戳
+        t_events_raw = d.get("t_events", [])
+        t_events = []
+        for ev in t_events_raw:
+            ev = dict(ev)
+            ca = ev.get("created_at")
+            if isinstance(ca, str):
+                try:
+                    dt = datetime.strptime(ca, "%Y-%m-%d %H:%M:%S")
+                    ev["created_at"] = int(dt.timestamp())
+                except ValueError:
+                    ev["created_at"] = None
+            t_events.append(ev)
+
         return cls(
             code=d["code"],
             name=d["name"],
@@ -121,7 +136,7 @@ class StockConfig:
             retracement_threshold=d.get("retracement_threshold"),
             bounce_threshold=d.get("bounce_threshold"),
             t_threshold=d.get("t_threshold"),
-            t_events=list(d.get("t_events", [])),
+            t_events=t_events,
             t_s_enabled=bool(d.get("t_s_enabled", True)),
             t_b_enabled=bool(d.get("t_b_enabled", True)),
             disabled_alerts=list(d.get("disabled_alerts", [])),

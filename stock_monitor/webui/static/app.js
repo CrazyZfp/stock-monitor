@@ -73,7 +73,11 @@ function renderTList(container, events) {
     const label = isS ? 'S↓' : 'B↑';
     const priceStr = fmtPrice(e.price);
     const targetStr = e.target_price != null ? `→ ${fmtPrice(e.target_price)}` : '';
-    return `<span class="t-event-tag${isS ? ' type-s' : ' type-b'}" title="${escapeHtml(e.created_at)} @ ${e.price}${e.target_price != null ? ' → ' + e.target_price : ''}">
+    const triggerIcon = e.triggered
+      ? `<span class="t-trigger triggered" data-treset="${escapeHtml(e.id)}" data-tcode="${escapeHtml(container.dataset.tlist)}"></span>`
+      : `<span class="t-trigger pending"></span>`;
+    return `<span class="t-event-tag${isS ? ' type-s' : ' type-b'}" title="${escapeHtml(new Date(e.created_at * 1000).toLocaleString())} @ ${e.price}${e.target_price != null ? ' → ' + e.target_price : ''}">
+      ${triggerIcon}
       <span class="t-event-edit" data-tedit="${escapeHtml(e.id)}" data-tcode="${escapeHtml(container.dataset.tlist)}">${label} ${priceStr} ${targetStr}</span>
       <button class="btn-t-del" data-tdel="${escapeHtml(e.id)}" data-tcode="${escapeHtml(container.dataset.tlist)}">×</button>
     </span>`;
@@ -94,10 +98,10 @@ function renderStocks() {
         <div class="quote-price">${fmtPrice(q.price)}</div>
         <div class="quote-change">${fmtChange(q.change_percent)}</div>
       </td>
-      <td class="${q.surge_change != null ? priceCellClass(q.surge_change) : ''}" title="${q.surge_change != null ? `基准价: ${fmtPrice(q.surge_base_price)} @ ${new Date(q.surge_base_time).toLocaleString()}` : ''}">
+      <td class="${q.surge_change != null ? priceCellClass(q.surge_change) : ''}" title="${q.surge_change != null ? `基准价: ${fmtPrice(q.surge_base_price)} @ ${new Date(q.surge_base_time * 1000).toLocaleString()}` : ''}">
         ${q.surge_change != null ? fmtChange(q.surge_change) : s.speed_threshold != null ? s.speed_threshold + '%' : '—'}
       </td>
-      <td>${q.as_of ? new Date(q.as_of).toLocaleString() : '—'}</td>
+      <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
       <td><label class="switch"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-code="${escapeHtml(s.code)}" class="toggle"><span class="slider"></span></label></td>
       <td>
         <button class="btn" data-edit="${escapeHtml(s.code)}">编辑</button>
@@ -181,6 +185,18 @@ $('#stocks-table').addEventListener('click', async (e) => {
       await api(`/api/stocks/${code}/t-events/${eventId}`, { method: 'DELETE' });
       toast('已删除'); loadStocks();
     } catch (e) { toast('删除失败: ' + e.message, 'error'); }
+    return;
+  }
+  // T 事件重置
+  const tReset = e.target.closest('.t-trigger.triggered');
+  if (tReset) {
+    const eventId = tReset.dataset.treset;
+    const code = tReset.dataset.tcode;
+    try {
+      await api(`/api/stocks/${code}/t-events/${eventId}/reset`, { method: 'POST' });
+      toast('T 事件已重置，今日可再次触发');
+      loadStocks();
+    } catch (err) { toast('重置失败: ' + err.message, 'error'); }
     return;
   }
   // T 事件编辑

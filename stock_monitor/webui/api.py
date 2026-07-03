@@ -72,9 +72,9 @@ class StatusOut(BaseModel):
     running: bool
     check_count: int
     alert_count: int
-    last_check_at: Optional[float]
-    last_alert_at: Optional[float]
-    started_at: Optional[float]
+    last_check_at: Optional[int]
+    last_alert_at: Optional[int]
+    started_at: Optional[int]
     last_error: Optional[str]
     poll_interval_seconds: int = 30
     stocks: list[dict]
@@ -284,7 +284,7 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     def add_t_event(code: str, payload: TEventIn):
         if payload.type not in ("S", "B"):
             raise HTTPException(400, "type 必须为 S 或 B")
-        event = manager.add_t_event(code, payload.type, payload.price)
+        event = manager.add_t_event(code, payload.type, payload.price, target_price=payload.target_price)
         return event
 
     @router.put("/stocks/{code}/t-events/{event_id}")
@@ -297,6 +297,12 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     @router.delete("/stocks/{code}/t-events/{event_id}")
     def delete_t_event(code: str, event_id: str):
         if not manager.remove_t_event(code, event_id):
+            raise HTTPException(404, f"事件 {event_id} 不存在")
+        return {"ok": True}
+
+    @router.post("/stocks/{code}/t-events/{event_id}/reset")
+    def reset_t_event(code: str, event_id: str):
+        if not manager.reset_t_event(code, event_id):
             raise HTTPException(404, f"事件 {event_id} 不存在")
         return {"ok": True}
 
