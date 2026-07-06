@@ -9,12 +9,23 @@ from __future__ import annotations
 
 import argparse
 import logging
+import logging.handlers
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import uvicorn
 
 from .config import default_config_path
+
+
+class ShanghaiFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        from datetime import datetime
+        dt = datetime.fromtimestamp(record.created, tz=ZoneInfo("Asia/Shanghai"))
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime(self.default_time_format) + f',{record.msecs:03.0f}'
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +77,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
     args = parser.parse_args(argv)
 
-    # 配置 logging
+    # 配置 logging：输出到项目 logs/ 目录，按日滚动，保留 7 天
+    project_root = Path(__file__).resolve().parent.parent
+    log_dir = project_root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    file_handler = logging.handlers.TimedRotatingFileHandler(
+        log_dir / "app.log",
+        when="midnight",
+        backupCount=7,
+        encoding="utf-8",
+        utc=True,
+    )
+    file_handler.setFormatter(ShanghaiFormatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    ))
+
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[file_handler],
     )
 
     # 注入配置路径到 app 工厂
@@ -94,7 +120,12 @@ def main(argv: list[str] | None = None) -> int:
         print("       当前未启用鉴权，请确保网络环境可信。")
     print("=" * 60)
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_config=None,
+    )
     return 0
 
 

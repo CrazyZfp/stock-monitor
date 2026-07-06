@@ -99,7 +99,7 @@ function renderStocks() {
         <div class="quote-change">${fmtChange(q.change_percent)}</div>
       </td>
       <td class="${q.surge_change != null ? priceCellClass(q.surge_change) : ''}" title="${q.surge_change != null ? `基准价: ${fmtPrice(q.surge_base_price)} @ ${new Date(q.surge_base_time * 1000).toLocaleString()}` : ''}">
-        ${q.surge_change != null ? fmtChange(q.surge_change) : s.speed_threshold != null ? s.speed_threshold + '%' : '—'}
+        ${q.surge_change != null ? fmtChange(q.surge_change) : '—'}
       </td>
       <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
       <td><label class="switch"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-code="${escapeHtml(s.code)}" class="toggle"><span class="slider"></span></label></td>

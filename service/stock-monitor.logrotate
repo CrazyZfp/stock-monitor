@@ -1,0 +1,11 @@
+# stock-monitor 日志轮转配置
+# 安装: sudo cp stock-monitor.logrotate /etc/logrotate.d/stock-monitor
+
+~/deploy/stock-monitor/logs/systemd/*.log {
+    daily
+    rotate 7
+    compress
+    copytruncate
+    missingok
+    notifempty
+}

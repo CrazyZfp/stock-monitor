@@ -8,6 +8,9 @@ wheels/
 *.egg
 .playwright-mcp/
 uv.lock
+.codegraph/
+opencode.jsonc
+AGENTS.md
 
 # Virtual environments
 .venv

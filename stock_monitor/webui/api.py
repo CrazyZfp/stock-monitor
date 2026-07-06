@@ -216,10 +216,15 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     @router.get("/stocks")
     def list_stocks():
         quotes = manager.get_quotes()
-        return [{
-            **s.to_dict(),
-            "quote": quotes.get(s.code, {"price": None, "change_percent": None, "as_of": None}),
-        } for s in manager.get_config().stocks]
+        triggered = manager.monitor.t_events_triggered if manager.monitor else {}
+        result = []
+        for s in manager.get_config().stocks:
+            d = s.to_dict()
+            for ev in d.get("t_events", []):
+                ev["triggered"] = s.code in triggered and ev["id"] in triggered[s.code]
+            d["quote"] = quotes.get(s.code, {"price": None, "change_percent": None, "as_of": None})
+            result.append(d)
+        return result
 
     @router.get("/stocks/search")
     def search_stocks(q: str = Query(..., min_length=1)):

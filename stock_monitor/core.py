@@ -15,18 +15,9 @@ import threading
 import logging
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
-import sys
 
 import cn_stock_holidays.data as shsz
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
 logger = logging.getLogger(__name__)
 
 class StockMonitor:
@@ -275,7 +266,7 @@ class StockMonitor:
             True: 可以发送通知
             False: 在冷却时间内
         """
-        last_time = self.notification_cooldown[stock_code].get(alert_type)
+        last_time = self.notification_cooldown.get(stock_code, {}).get(alert_type)
         if last_time is None:
             return True
 
@@ -286,7 +277,7 @@ class StockMonitor:
     
     def update_cooldown(self, stock_code: str, alert_type: str):
         """更新通知冷却时间"""
-        self.notification_cooldown[stock_code][alert_type] = datetime.now()
+        self.notification_cooldown.setdefault(stock_code, {})[alert_type] = datetime.now()
     
     def generate_disguise_message(self, alert_type: str, stock_info: Dict,
                                  current_price: float, threshold: float = None, *,
@@ -694,17 +685,28 @@ class StockMonitor:
             self.t_events[stock_code] = remaining
 
     def daily_reset(self, stock_t_events: dict[str, list[dict]]):
-        """每日重置所有通知状态，重新加载 T 事件"""
-        self.notification_cooldown.clear()
-        self.price_alert_status.clear()
-        self.price_high_alerted_abs.clear()
-        self.price_low_alerted_abs.clear()
-        self.price_high_alerted_daily.clear()
-        self.price_low_alerted_daily.clear()
-        self.peak_since_high_alert.clear()
-        self.valley_since_low_alert.clear()
-        self.retracement_armed.clear()
-        self.bounce_armed.clear()
+        """每日重置所有通知状态，重新加载 T 事件（保留 stock_code 键，重置内部值）"""
+        for v in self.notification_cooldown.values():
+            v.clear()
+        for v in self.price_alert_status.values():
+            v.clear()
+            v.update({'_high_init': False, '_low_init': False})
+        for v in self.price_high_alerted_abs.values():
+            v.clear()
+        for v in self.price_low_alerted_abs.values():
+            v.clear()
+        for v in self.price_high_alerted_daily.values():
+            v.clear()
+        for v in self.price_low_alerted_daily.values():
+            v.clear()
+        for code in self.peak_since_high_alert:
+            self.peak_since_high_alert[code] = 0.0
+        for code in self.valley_since_low_alert:
+            self.valley_since_low_alert[code] = float('inf')
+        for code in self.retracement_armed:
+            self.retracement_armed[code] = False
+        for code in self.bounce_armed:
+            self.bounce_armed[code] = False
         for code, events in stock_t_events.items():
             if code in self.t_events:
                 self.t_events[code] = list(events)

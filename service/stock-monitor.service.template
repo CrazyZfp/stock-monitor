@@ -11,8 +11,5 @@ RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=${SYSTEM_PATH}
 
-StandardOutput=append:${LOG_DIR}/stdout.log
-StandardError=append:${LOG_DIR}/stderr.log
-
 [Install]
 WantedBy=default.target

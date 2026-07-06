@@ -431,7 +431,11 @@ class MonitorManager:
                                 logger.error(f"检查 {code} 时异常: {e}")
                                 self.stats["last_error"] = str(e)
                     self.monitor._batch_mode = False
+                    n_alerts = len(self.monitor._alert_buffer)
                     self.monitor.flush_alerts()
+                    if n_alerts > 0:
+                        self.stats["alert_count"] += n_alerts
+                        self.stats["last_alert_at"] = int(time.time())
                     self.stats["last_check_at"] = int(time.time())
                     self.stats["check_count"] += 1
 

@@ -71,8 +71,7 @@ systemd_unit_path() {
 }
 
 systemd_log_dir() {
-    local xdg="${XDG_DATA_HOME:-$HOME/.local/share}"
-    echo "$xdg/${SERVICE_NAME}/logs"
+    echo "$SCRIPT_DIR/logs/systemd"
 }
 
 config_path() {
@@ -116,7 +115,6 @@ render_template() {
     HOST="$HOST" \
     PORT="$PORT" \
     SYSTEM_PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}" \
-    LOG_DIR="$(_log_dir_for_render)" \
     envsubst < "$template" > "$output"
 }
 
@@ -192,10 +190,9 @@ macos_status() {
 }
 
 linux_install() {
-    local unit log_dir
+    local unit
     unit="$(systemd_unit_path)"
-    log_dir="$(systemd_log_dir)"
-    mkdir -p "$(dirname "$unit")" "$log_dir"
+    mkdir -p "$(dirname "$unit")"
 
     if [[ -f "$unit" ]]; then
         info "已存在 $unit，先停掉再覆盖"
@@ -209,7 +206,7 @@ linux_install() {
         die "systemctl 启动失败"
     fi
     info "已启动，UI: http://${HOST}:${PORT}"
-    info "日志:   $log_dir/stdout.log"
+    info "日志:   journalctl --user -u ${SERVICE_NAME} -f"
 }
 
 linux_uninstall() {
@@ -240,13 +237,12 @@ linux_status() {
 
 logs() {
     local plat; plat="$(detect_platform)"
-    local log_dir
-    if [[ "$plat" == "darwin" ]]; then
-        log_dir="$(launchd_log_dir)"
-    else
-        log_dir="$(systemd_log_dir)"
+    if [[ "$plat" == "linux" ]]; then
+        journalctl --user -u "$SERVICE_NAME" -f -n 100 "$@"
+        return
     fi
 
+    local log_dir; log_dir="$(launchd_log_dir)"
     local files=()
     if [[ "$LOGS_STDOUT_ONLY" == "1" ]]; then
         files+=("$log_dir/stdout.log")
