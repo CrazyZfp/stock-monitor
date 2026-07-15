@@ -19,7 +19,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .config import Config, ConfigStore, StockConfig
+from .config import Config, ConfigStore, FundConfig, StockConfig
 from .core import StockMonitor
 
 logger = logging.getLogger(__name__)
@@ -110,6 +110,40 @@ class MonitorManager:
         self._apply_stock_change(code)
         return True
 
+    # ===== 基金 CRUD =====
+
+    def upsert_fund(self, fund: FundConfig):
+        with self._lock:
+            def mut(cfg: Config):
+                existing = cfg.find_fund(fund.code)
+                if existing is not None:
+                    cfg.funds.remove(existing)
+                cfg.funds.append(fund)
+            self.store.update(mut)
+        self._apply_fund_change(fund.code)
+
+    def delete_fund(self, code: str) -> bool:
+        with self._lock:
+            cfg = self.store.get()
+            if cfg.find_fund(code) is None:
+                return False
+            def mut(c: Config):
+                c.funds = [f for f in c.funds if f.code != code]
+            self.store.update(mut)
+        self._remove_fund_runtime(code)
+        return True
+
+    def patch_fund_enabled(self, code: str, enabled: bool) -> bool:
+        with self._lock:
+            cfg = self.store.get()
+            target = cfg.find_fund(code)
+            if target is None:
+                return False
+            target.enabled = enabled
+            self.store.save(cfg)
+        self._apply_fund_change(code)
+        return True
+
     def update_poll_interval(self, seconds: int):
         if seconds < 5:
             seconds = 5
@@ -143,6 +177,46 @@ class MonitorManager:
             self.store.save(cfg)
         self._apply_runtime_changes()
 
+    def export_config(self, scope: list[str]) -> dict:
+        """按 scope 导出配置子集"""
+        cfg = self.store.get()
+        result = {}
+        if "stocks" in scope:
+            result["stocks"] = [s.to_dict() for s in cfg.stocks]
+        if "funds" in scope:
+            result["funds"] = [f.to_dict() for f in cfg.funds]
+        if "templates" in scope:
+            result["disguise_templates"] = cfg.disguise_templates
+        if "webhook" in scope:
+            result["dingding_webhook"] = cfg.dingding_webhook
+            result["at_mobiles"] = list(cfg.at_mobiles)
+            result["at_user_ids"] = list(cfg.at_user_ids)
+        if "other" in scope:
+            result["poll_interval_seconds"] = cfg.poll_interval_seconds
+        return result
+
+    def import_config(self, data: dict, scope: list[str]):
+        """按 scope 导入配置子集"""
+        with self._lock:
+            cfg = self.store.get()
+            if "stocks" in scope and "stocks" in data:
+                cfg.stocks = [StockConfig.from_dict(s) for s in data["stocks"]]
+            if "funds" in scope and "funds" in data:
+                cfg.funds = [FundConfig.from_dict(f) for f in data["funds"]]
+            if "templates" in scope and "disguise_templates" in data:
+                cfg.disguise_templates = data["disguise_templates"]
+            if "webhook" in scope:
+                if "dingding_webhook" in data:
+                    cfg.dingding_webhook = data["dingding_webhook"]
+                if "at_mobiles" in data:
+                    cfg.at_mobiles = list(data["at_mobiles"])
+                if "at_user_ids" in data:
+                    cfg.at_user_ids = list(data["at_user_ids"])
+            if "other" in scope and "poll_interval_seconds" in data:
+                cfg.poll_interval_seconds = int(data["poll_interval_seconds"])
+            self.store.save(cfg)
+        self._apply_runtime_changes()
+
     def get_config(self) -> Config:
         return self.store.get()
 
@@ -152,6 +226,7 @@ class MonitorManager:
             "running": self._running,
             "poll_interval_seconds": self.store.get().poll_interval_seconds,
             "stocks": [s.to_dict() for s in self.store.get().stocks],
+            "funds": [f.to_dict() for f in self.store.get().funds],
             "config_path": str(self.store.path),
             "price_latency": self.monitor._price_latency if self.monitor else None,
         }
@@ -210,6 +285,36 @@ class MonitorManager:
                         quote["surge_base_price"] = base_price
                         quote["surge_base_time"] = int(base["time"].timestamp())
                 result[stock.code] = quote
+            return result
+
+    def get_fund_quotes(self) -> dict:
+        """返回每只基金估算净值 + 当日涨跌幅（无缓存时实时获取）"""
+        empty = {"nav": None, "estimated_nav": None, "change_percent": None, "as_of": None}
+        cfg = self.store.get()
+        with self._lock:
+            if self.monitor is None:
+                return {f.code: dict(empty) for f in cfg.funds}
+            stale_codes = [f.code for f in cfg.funds if f.enabled and not self.monitor.price_history.get(f.code)]
+            if stale_codes:
+                self.monitor.fetch_fund_prices(stale_codes)
+            result = {}
+            for fund in cfg.funds:
+                history = self.monitor.price_history.get(fund.code, [])
+                last_nav = self.monitor.yesterday_close.get(fund.code, 0.0)
+                if not history:
+                    result[fund.code] = dict(empty)
+                    continue
+                latest = history[-1]
+                change = None
+                if last_nav > 0:
+                    change = (latest["price"] - last_nav) / last_nav * 100
+                    change = round(change, 2)
+                result[fund.code] = {
+                    "nav": last_nav if last_nav > 0 else None,
+                    "estimated_nav": latest["price"],
+                    "change_percent": change,
+                    "as_of": int(latest["time"].timestamp()),
+                }
             return result
 
     # ===== 做T事件 =====
@@ -319,6 +424,10 @@ class MonitorManager:
             if not s.enabled:
                 continue
             m.add_stock(s.code, self._stock_to_dict(s))
+        for f in cfg.funds:
+            if not f.enabled:
+                continue
+            m.add_fund(f.code, self._fund_to_dict(f))
         # 覆盖默认模板
         if cfg.disguise_templates:
             m.disguise_templates = {
@@ -345,6 +454,18 @@ class MonitorManager:
             "t_s_enabled": s.t_s_enabled,
             "t_b_enabled": s.t_b_enabled,
             "disabled_alerts": list(s.disabled_alerts),
+        }
+
+    def _fund_to_dict(self, f: FundConfig) -> dict:
+        return {
+            "name": f.name,
+            "nickname": f.nickname,
+            "cooldown_minutes": f.cooldown_minutes,
+            "daily_change_up": list(f.daily_change_up),
+            "daily_change_down": list(f.daily_change_down),
+            "retracement_threshold": f.retracement_threshold,
+            "bounce_threshold": f.bounce_threshold,
+            "disabled_alerts": list(f.disabled_alerts),
         }
 
     def _apply_stock_change(self, code: str):
@@ -375,6 +496,33 @@ class MonitorManager:
             self.monitor.valley_since_low_alert.pop(code, None)
             self.monitor.t_events.pop(code, None)
 
+    def _apply_fund_change(self, code: str):
+        with self._lock:
+            if self.monitor is None:
+                return
+            cfg = self.store.get()
+            target = cfg.find_fund(code)
+            self._remove_fund_runtime(code)
+            if target is not None and target.enabled:
+                self.monitor.add_fund(code, self._fund_to_dict(target))
+
+    def _remove_fund_runtime(self, code: str):
+        with self._lock:
+            if self.monitor is None:
+                return
+            self.monitor.stocks.pop(code, None)
+            self.monitor.price_history.pop(code, None)
+            self.monitor.notification_cooldown.pop(code, None)
+            self.monitor.price_alert_status.pop(code, None)
+            self.monitor.yesterday_close.pop(code, None)
+            self.monitor.price_high_alerted_abs.pop(code, None)
+            self.monitor.price_low_alerted_abs.pop(code, None)
+            self.monitor.price_high_alerted_daily.pop(code, None)
+            self.monitor.price_low_alerted_daily.pop(code, None)
+            self.monitor.peak_since_high_alert.pop(code, None)
+            self.monitor.valley_since_low_alert.pop(code, None)
+            self.monitor.t_events.pop(code, None)
+
     def _apply_runtime_changes(self):
         """webhook/templates/轮询间隔变化时更新 monitor 字段（不重建实例）"""
         with self._lock:
@@ -389,14 +537,20 @@ class MonitorManager:
                 self.monitor.disguise_templates = {
                     k: list(v) for k, v in cfg.disguise_templates.items()
                 }
-            # 股票列表的 enabled 状态变化也可能需要重新加载
-            enabled_codes = {s.code for s in cfg.stocks if s.enabled}
+            enabled_stock_codes = {s.code for s in cfg.stocks if s.enabled}
             for code in list(self.monitor.stocks.keys()):
-                if code not in enabled_codes:
+                if code not in enabled_stock_codes and cfg.find_fund(code) is None:
                     self._remove_stock_runtime(code)
             for s in cfg.stocks:
                 if s.enabled and s.code not in self.monitor.stocks:
                     self.monitor.add_stock(s.code, self._stock_to_dict(s))
+            enabled_fund_codes = {f.code for f in cfg.funds if f.enabled}
+            for code in list(self.monitor.stocks.keys()):
+                if code not in enabled_fund_codes and cfg.find_stock(code) is None:
+                    self._remove_fund_runtime(code)
+            for f in cfg.funds:
+                if f.enabled and f.code not in self.monitor.stocks:
+                    self.monitor.add_fund(f.code, self._fund_to_dict(f))
 
     def _loop(self):
         """后台循环：每轮检查所有股票，同一轮次多条通知合为一条发送，避免钉钉限流"""
@@ -430,6 +584,17 @@ class MonitorManager:
                             except Exception as e:
                                 logger.error(f"检查 {code} 时异常: {e}")
                                 self.stats["last_error"] = str(e)
+                    fund_codes = [f.code for f in cfg.funds if f.enabled]
+                    if fund_codes:
+                        fund_prices = self.monitor.fetch_fund_prices(fund_codes)
+                        for code in fund_codes:
+                            if code not in fund_prices:
+                                continue
+                            try:
+                                self.monitor.check_stock_alerts(code, override_price=fund_prices[code])
+                            except Exception as e:
+                                logger.error(f"检查基金 {code} 时异常: {e}")
+                                self.stats["last_error"] = str(e)
                     self.monitor._batch_mode = False
                     n_alerts = len(self.monitor._alert_buffer)
                     self.monitor.flush_alerts()
@@ -449,15 +614,17 @@ class MonitorManager:
         logger.info("监控循环退出")
 
     def _sync_enabled(self, cfg: Config):
-        """与 cfg 对齐 stocks 字典（启用/禁用）"""
+        """与 cfg 对齐 stocks / funds 字典（启用/禁用）"""
         if self.monitor is None:
             return
         enabled_codes = {s.code for s in cfg.stocks if s.enabled}
-        # 移除
+        enabled_codes |= {f.code for f in cfg.funds if f.enabled}
         for code in list(self.monitor.stocks.keys()):
             if code not in enabled_codes:
                 self._remove_stock_runtime(code)
-        # 新增
         for s in cfg.stocks:
             if s.enabled and s.code not in self.monitor.stocks:
                 self.monitor.add_stock(s.code, self._stock_to_dict(s))
+        for f in cfg.funds:
+            if f.enabled and f.code not in self.monitor.stocks:
+                self.monitor.add_fund(f.code, self._fund_to_dict(f))

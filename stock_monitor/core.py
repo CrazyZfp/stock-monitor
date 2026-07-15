@@ -148,6 +148,83 @@ class StockMonitor:
         self.valley_since_low_alert[stock_code] = float('inf')
         self.t_events[stock_code] = list(config.get('t_events', []))
         logger.info(f"添加监控股票: {config['name']} ({stock_code})")
+
+    def add_fund(self, fund_code: str, config: Dict):
+        """添加基金到监控"""
+        self.stocks[fund_code] = config
+        self.price_history[fund_code] = []
+        self.notification_cooldown[fund_code] = {
+            'daily_up': None,
+            'daily_down': None,
+            'retracement': None,
+            'bounce': None,
+        }
+        self.price_alert_status[fund_code] = {}
+        self.yesterday_close[fund_code] = 0.0
+        self.price_high_alerted_abs[fund_code] = set()
+        self.price_low_alerted_abs[fund_code] = set()
+        self.price_high_alerted_daily[fund_code] = set()
+        self.price_low_alerted_daily[fund_code] = set()
+        self.peak_since_high_alert[fund_code] = 0.0
+        self.valley_since_low_alert[fund_code] = float('inf')
+        self.retracement_armed[fund_code] = False
+        self.bounce_armed[fund_code] = False
+        self.t_events[fund_code] = []
+        logger.info(f"添加监控基金: {config['name']} ({fund_code})")
+
+    def fetch_fund_prices(self, fund_codes: list[str]) -> dict[str, float]:
+        """批量获取基金估算净值（天天基金 fundgz JSONP API）"""
+        if not fund_codes:
+            return {}
+        import re
+        import requests
+        results = {}
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://fund.eastmoney.com/',
+        }
+
+        def fetch_one(code: str) -> tuple[str, float | None]:
+            try:
+                url = f"http://fundgz.1234567.com.cn/js/{code}.js"
+                resp = requests.get(url, headers=headers, timeout=10)
+                if resp.status_code != 200:
+                    logger.error(f"获取基金 {code} 净值失败: HTTP {resp.status_code}")
+                    return code, None
+                match = re.search(r'jsonpgz\(({.*})\)', resp.text)
+                if not match:
+                    return code, None
+                data = json.loads(match.group(1))
+                last_nav = data.get("dwjz")
+                gsz = data.get("gsz")
+                try:
+                    last_nav = float(last_nav) if last_nav is not None else 0.0
+                    gsz = float(gsz) if gsz is not None else None
+                except (ValueError, TypeError):
+                    return code, None
+                self.yesterday_close[code] = last_nav
+                if gsz is not None and gsz > 0:
+                    timestamp = datetime.now()
+                    self.price_history.setdefault(code, []).append({
+                        'time': timestamp,
+                        'price': gsz,
+                    })
+                    cutoff = timestamp - timedelta(hours=24)
+                    self.price_history[code] = [p for p in self.price_history[code] if p['time'] > cutoff]
+                    return code, gsz
+                return code, None
+            except Exception as e:
+                logger.error(f"获取基金 {code} 净值异常: {e}")
+                return code, None
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=min(len(fund_codes), 10)) as pool:
+            futures = [pool.submit(fetch_one, code) for code in fund_codes]
+            for future in as_completed(futures):
+                code, gsz = future.result()
+                if gsz is not None:
+                    results[code] = gsz
+        return results
     
     def get_stock_price(self, stock_code: str) -> Optional[float]:
         """
@@ -466,41 +543,50 @@ class StockMonitor:
             change_high = self._get_change_high_tiers(config)
             change_low = self._get_change_low_tiers(config)
 
+            # 先找出本次新增触发的最高档位，低档只标记不发送
+            new_high_idx = None
             for idx, tier_pct in enumerate(change_high, start=1):
-                if daily_change_pct >= tier_pct:
-                    if idx not in alerted_daily_high:
-                        cooldown_key = f'daily_up_tier_{idx}'
-                        if 'daily_up' not in disabled and self.check_cooldown(stock_code, cooldown_key):
-                            self.send_dingding_notification(
-                                self.generate_disguise_message(
-                                    'daily_up', config, current_price,
-                                    threshold=tier_pct,
-                                    tier_index=idx, tier_threshold=tier_pct,
-                                    daily_change=daily_change_pct,
-                                )
-                            )
-                            self.update_cooldown(stock_code, cooldown_key)
-                        alerted_daily_high.add(idx)
-                        self.retracement_armed[stock_code] = True
-                        self.peak_since_high_alert[stock_code] = current_price
+                if daily_change_pct >= tier_pct and idx not in alerted_daily_high:
+                    alerted_daily_high.add(idx)
+                    new_high_idx = idx
 
+            if new_high_idx is not None:
+                tier_pct = change_high[new_high_idx - 1]
+                cooldown_key = f'daily_up_tier_{new_high_idx}'
+                if 'daily_up' not in disabled and self.check_cooldown(stock_code, cooldown_key):
+                    self.send_dingding_notification(
+                        self.generate_disguise_message(
+                            'daily_up', config, current_price,
+                            threshold=tier_pct,
+                            tier_index=new_high_idx, tier_threshold=tier_pct,
+                            daily_change=daily_change_pct,
+                        )
+                    )
+                    self.update_cooldown(stock_code, cooldown_key)
+                self.retracement_armed[stock_code] = True
+                self.peak_since_high_alert[stock_code] = current_price
+
+            new_low_idx = None
             for idx, tier_pct in enumerate(change_low, start=1):
-                if daily_change_pct <= -tier_pct:
-                    if idx not in alerted_daily_low:
-                        cooldown_key = f'daily_down_tier_{idx}'
-                        if 'daily_down' not in disabled and self.check_cooldown(stock_code, cooldown_key):
-                            self.send_dingding_notification(
-                                self.generate_disguise_message(
-                                    'daily_down', config, current_price,
-                                    threshold=tier_pct,
-                                    tier_index=idx, tier_threshold=tier_pct,
-                                    daily_change=daily_change_pct,
-                                )
-                            )
-                            self.update_cooldown(stock_code, cooldown_key)
-                        alerted_daily_low.add(idx)
-                        self.bounce_armed[stock_code] = True
-                        self.valley_since_low_alert[stock_code] = current_price
+                if daily_change_pct <= -tier_pct and idx not in alerted_daily_low:
+                    alerted_daily_low.add(idx)
+                    new_low_idx = idx
+
+            if new_low_idx is not None:
+                tier_pct = change_low[new_low_idx - 1]
+                cooldown_key = f'daily_down_tier_{new_low_idx}'
+                if 'daily_down' not in disabled and self.check_cooldown(stock_code, cooldown_key):
+                    self.send_dingding_notification(
+                        self.generate_disguise_message(
+                            'daily_down', config, current_price,
+                            threshold=tier_pct,
+                            tier_index=new_low_idx, tier_threshold=tier_pct,
+                            daily_change=daily_change_pct,
+                        )
+                    )
+                    self.update_cooldown(stock_code, cooldown_key)
+                self.bounce_armed[stock_code] = True
+                self.valley_since_low_alert[stock_code] = current_price
 
         # --- 3. 回撤检测（从高位回落）---
         retrace_th = config.get('retracement_threshold')

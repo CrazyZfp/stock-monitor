@@ -88,6 +88,9 @@ td.quote-flat { color: #6b7280; }
 .form-row-checkbox { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
 .form-row-checkbox label { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; font-size: 13px; color: #374151; cursor: pointer; }
 .form-row-checkbox input { width: auto; margin: 0; accent-color: #3b82f6; }
+
+.checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; padding: 6px 0; }
+.checkbox-row input { width: auto; margin: 0; accent-color: #3b82f6; }
 .actions { display: flex; gap: 8px; margin-top: 20px; }
 
 /* ===== 提示 ===== */

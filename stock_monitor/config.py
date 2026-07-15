@@ -144,6 +144,44 @@ class StockConfig:
 
 
 @dataclass
+class FundConfig:
+    code: str
+    name: str
+    nickname: str = ""
+    cooldown_minutes: int = 5
+    enabled: bool = True
+    daily_change_up: list[float] = field(default_factory=list)
+    daily_change_down: list[float] = field(default_factory=list)
+    retracement_threshold: Optional[float] = None
+    bounce_threshold: Optional[float] = None
+    disabled_alerts: list[str] = field(default_factory=list)
+
+    def get_change_high_tiers(self) -> list[float]:
+        return sorted(t for t in self.daily_change_up if t is not None)
+
+    def get_change_low_tiers(self) -> list[float]:
+        return sorted(t for t in self.daily_change_down if t is not None)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "FundConfig":
+        return cls(
+            code=d["code"],
+            name=d["name"],
+            nickname=d.get("nickname", ""),
+            cooldown_minutes=int(d.get("cooldown_minutes", 5)),
+            enabled=bool(d.get("enabled", True)),
+            daily_change_up=list(d.get("daily_change_up", [])),
+            daily_change_down=list(d.get("daily_change_down", [])),
+            retracement_threshold=d.get("retracement_threshold"),
+            bounce_threshold=d.get("bounce_threshold"),
+            disabled_alerts=list(d.get("disabled_alerts", [])),
+        )
+
+
+@dataclass
 class Config:
     dingding_webhook: str = ""
     at_mobiles: list[str] = field(default_factory=list)
@@ -151,6 +189,7 @@ class Config:
     poll_interval_seconds: int = 30
     disguise_templates: dict[str, list[str]] = field(default_factory=dict)
     stocks: list[StockConfig] = field(default_factory=list)
+    funds: list[FundConfig] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -160,6 +199,7 @@ class Config:
             "poll_interval_seconds": self.poll_interval_seconds,
             "disguise_templates": self.disguise_templates,
             "stocks": [s.to_dict() for s in self.stocks],
+            "funds": [f.to_dict() for f in self.funds],
         }
 
     @classmethod
@@ -174,12 +214,19 @@ class Config:
             poll_interval_seconds=int(d.get("poll_interval_seconds", 30)),
             disguise_templates=merged_templates,
             stocks=[StockConfig.from_dict(x) for x in d.get("stocks", [])],
+            funds=[FundConfig.from_dict(x) for x in d.get("funds", [])],
         )
 
     def find_stock(self, code: str) -> Optional[StockConfig]:
         for s in self.stocks:
             if s.code == code:
                 return s
+        return None
+
+    def find_fund(self, code: str) -> Optional[FundConfig]:
+        for f in self.funds:
+            if f.code == code:
+                return f
         return None
 
 

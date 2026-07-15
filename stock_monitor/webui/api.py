@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from ..config import Config, ConfigStore, StockConfig
+from ..config import Config, ConfigStore, FundConfig, StockConfig
 from ..manager import MonitorManager
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,23 @@ class StockIn(BaseModel):
 
 
 class StockPatch(BaseModel):
+    enabled: bool
+
+
+class FundIn(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6)
+    name: str
+    nickname: str = ""
+    cooldown_minutes: int = 5
+    enabled: bool = True
+    daily_change_up: list[float] = Field(default_factory=list)
+    daily_change_down: list[float] = Field(default_factory=list)
+    retracement_threshold: Optional[float] = None
+    bounce_threshold: Optional[float] = None
+    disabled_alerts: list[str] = Field(default_factory=list)
+
+
+class FundPatch(BaseModel):
     enabled: bool
 
 
@@ -284,6 +301,65 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
             raise HTTPException(404, f"股票 {code} 不存在")
         return {"ok": True}
 
+    # ----- 基金 -----
+    @router.get("/funds/search")
+    def search_funds(q: str = Query(..., min_length=1)):
+        import requests as _requests
+        try:
+            url = "https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx"
+            params = {"m": 1, "key": q}
+            headers = {"Referer": "https://fund.eastmoney.com/", "User-Agent": "Mozilla/5.0"}
+            resp = _requests.get(url, params=params, headers=headers, timeout=5)
+            data = resp.json()
+            results = []
+            for item in data.get("Datas", []):
+                code = item.get("CODE", "")
+                name = item.get("NAME", "")
+                if code and name:
+                    results.append({"code": code, "name": name})
+            return results
+        except Exception as e:
+            logger.warning(f"基金搜索失败: {e}")
+            return []
+
+    @router.get("/funds")
+    def list_funds():
+        quotes = manager.get_fund_quotes()
+        result = []
+        for f in manager.get_config().funds:
+            d = f.to_dict()
+            d["quote"] = quotes.get(f.code, {"nav": None, "estimated_nav": None, "change_percent": None, "as_of": None})
+            result.append(d)
+        return result
+
+    @router.post("/funds", status_code=201)
+    def create_fund(fund: FundIn):
+        fc = FundConfig(**fund.model_dump())
+        if manager.get_config().find_fund(fc.code) is not None:
+            raise HTTPException(409, f"基金代码 {fc.code} 已存在")
+        manager.upsert_fund(fc)
+        return fc.to_dict()
+
+    @router.put("/funds/{code}")
+    def update_fund(code: str, fund: FundIn):
+        if code != fund.code:
+            raise HTTPException(400, "URL 中的 code 与 body 中的 code 不一致")
+        fc = FundConfig(**fund.model_dump())
+        manager.upsert_fund(fc)
+        return fc.to_dict()
+
+    @router.delete("/funds/{code}")
+    def delete_fund(code: str):
+        if not manager.delete_fund(code):
+            raise HTTPException(404, f"基金 {code} 不存在")
+        return {"ok": True}
+
+    @router.patch("/funds/{code}/enabled")
+    def patch_fund_enabled(code: str, patch: FundPatch):
+        if not manager.patch_fund_enabled(code, patch.enabled):
+            raise HTTPException(404, f"基金 {code} 不存在")
+        return {"ok": True}
+
     # ----- 做T事件 -----
     @router.post("/stocks/{code}/t-events", status_code=201)
     def add_t_event(code: str, payload: TEventIn):
@@ -415,22 +491,22 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
 
     # ----- 导入 / 导出 -----
     @router.get("/export")
-    def export_config():
-        cfg = manager.get_config()
-        return cfg.to_dict()
+    def export_config(scope: str = Query("stocks,funds,templates,webhook,other")):
+        scopes = [s.strip() for s in scope.split(",") if s.strip()]
+        return manager.export_config(scopes)
 
     @router.post("/import")
-    async def import_config(file: UploadFile):
+    async def import_config(file: UploadFile, scope: str = Query("stocks,funds,templates,webhook,other")):
         import json
         try:
             raw = await file.read()
             data = json.loads(raw)
-            new_cfg = Config.from_dict(data)
         except json.JSONDecodeError as e:
             raise HTTPException(400, f"JSON 解析失败: {e}")
         except Exception as e:
             raise HTTPException(400, f"配置解析失败: {e}")
-        manager.replace_config(new_cfg)
-        return {"ok": True, "stocks": len(new_cfg.stocks)}
+        scopes = [s.strip() for s in scope.split(",") if s.strip()]
+        manager.import_config(data, scopes)
+        return {"ok": True, "scope": scopes}
 
     app.include_router(router)

@@ -51,6 +51,7 @@ $$('.tab').forEach(btn => btn.addEventListener('click', () => {
   btn.classList.add('active');
   $('#tab-' + btn.dataset.tab).classList.add('active');
   if (btn.dataset.tab === 'status') loadStatus();
+  if (btn.dataset.tab === 'funds') loadFunds();
 }));
 
 // ========== 股票 ==========
@@ -147,17 +148,29 @@ async function updateLatency() {
   }
 }
 
-// 报价自动刷新（每 30s）
-function startQuoteRefresh() {
-  if (quotesTimer) return;
+// 报价自动刷新（跟随后台轮询间隔）
+async function startQuoteRefresh() {
+  if (quotesTimer) {
+    clearInterval(quotesTimer);
+    quotesTimer = null;
+  }
   updateLatency();
+  let interval = 30_000;
+  try {
+    const s = await api('/api/status');
+    interval = (s.poll_interval_seconds || 30) * 1000;
+  } catch {}
   quotesTimer = setInterval(async () => {
     try {
       stocksCache = await api('/api/stocks');
       renderStocks();
     } catch {}
+    try {
+      fundsCache = await api('/api/funds');
+      renderFunds();
+    } catch {}
     updateLatency();
-  }, 30_000);
+  }, interval);
 }
 
 $('#stocks-table').addEventListener('click', async (e) => {
@@ -235,6 +248,188 @@ $('#stocks-table').addEventListener('change', async (e) => {
       toast(enabled ? '已启用' : '已停用');
     } catch (e) { toast('操作失败: ' + e.message, 'error'); loadStocks(); }
   }
+});
+
+// ========== 基金 ==========
+let fundsCache = [];
+
+async function loadFunds() {
+  fundsCache = await api('/api/funds');
+  renderFunds();
+}
+
+function renderFunds() {
+  const tbody = $('#funds-table tbody');
+  tbody.innerHTML = '';
+  for (const f of fundsCache) {
+    const q = f.quote || {};
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><code>${escapeHtml(f.code)}</code></td>
+      <td>${escapeHtml(f.name)}</td>
+      <td class="${priceCellClass(q.change_percent)}">
+        <div class="quote-price">${fmtPrice(q.estimated_nav)}</div>
+        <div class="quote-change">${fmtChange(q.change_percent)}</div>
+      </td>
+      <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
+      <td><label class="switch"><input type="checkbox" ${f.enabled ? 'checked' : ''} data-code="${escapeHtml(f.code)}" class="toggle-fund"><span class="slider"></span></label></td>
+      <td>
+        <button class="btn" data-fedit="${escapeHtml(f.code)}">编辑</button>
+        <button class="btn btn-danger" data-fdel="${escapeHtml(f.code)}">删除</button>
+      </td>`;
+    tbody.appendChild(tr);
+  }
+  $('#funds-empty').hidden = fundsCache.length > 0;
+  $('#funds-table').hidden = fundsCache.length === 0;
+}
+
+$('#funds-table').addEventListener('click', async (e) => {
+  const editCode = e.target.dataset.fedit;
+  if (editCode) openFundDialog(fundsCache.find(f => f.code === editCode));
+  const delCode = e.target.dataset.fdel;
+  if (delCode) {
+    if (confirm(`确认删除基金 ${delCode}?`)) {
+      try { await api(`/api/funds/${delCode}`, { method: 'DELETE' }); toast('已删除'); loadFunds(); }
+      catch (e) { toast('删除失败: ' + e.message, 'error'); }
+    }
+  }
+});
+
+$('#funds-table').addEventListener('change', async (e) => {
+  if (e.target.classList.contains('toggle-fund')) {
+    const code = e.target.dataset.code;
+    const enabled = e.target.checked;
+    try {
+      await api(`/api/funds/${code}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
+      toast(enabled ? '已启用' : '已停用');
+    } catch (e) { toast('操作失败: ' + e.message, 'error'); loadFunds(); }
+  }
+});
+
+const fundDialog = $('#fund-dialog');
+$('#btn-add-fund').addEventListener('click', () => openFundDialog(null));
+$('#btn-fund-cancel').addEventListener('click', () => { resetFundSearch(); fundDialog.close(); });
+
+function openFundDialog(fund) {
+  const form = $('#fund-form');
+  form.reset();
+  $('#fund-search-input').value = '';
+  $('#fund-code-display').value = '';
+  $('#fund-code-hidden').value = '';
+  $('#fund-search-dropdown').classList.remove('active');
+  $('#fund-search-dropdown').innerHTML = '';
+  $('#fund-dialog-title').textContent = fund ? '编辑基金' : '新增基金';
+  if (fund) {
+    for (const [k, v] of Object.entries(fund)) {
+      if (k === 'quote') continue;
+      if (form.elements[k]) {
+        if (k === 'daily_change_up' || k === 'daily_change_down') {
+          form.elements[k].value = (v || []).join(', ');
+        } else {
+          if (k === 'code') {
+            form.elements[k].value = v ?? '';
+            $('#fund-code-display').value = v ?? '';
+            $('#fund-search-input').value = (fund.name || '') + ' (' + (v ?? '') + ')';
+          } else {
+            form.elements[k].value = v ?? '';
+          }
+        }
+      }
+    }
+    $('#fund-search-input').readOnly = true;
+    const disabledSet = new Set(fund.disabled_alerts || []);
+    $$('.alert-type-toggle', form).forEach(cb => {
+      cb.checked = !disabledSet.has(cb.dataset.type);
+    });
+  } else {
+    $('#fund-search-input').readOnly = false;
+  }
+  fundDialog.showModal();
+}
+
+function resetFundSearch() {
+  $('#fund-search-input').value = '';
+  $('#fund-code-display').value = '';
+  $('#fund-code-hidden').value = '';
+  $('#fund-search-dropdown').classList.remove('active');
+  $('#fund-search-dropdown').innerHTML = '';
+  $('#fund-search-input').readOnly = false;
+}
+
+fundDialog.addEventListener('close', resetFundSearch);
+
+// 基金搜索自动补全
+let fundSearchTimer = null;
+$('#fund-search-input').addEventListener('input', () => {
+  clearTimeout(fundSearchTimer);
+  const q = $('#fund-search-input').value.trim();
+  if (!q) { $('#fund-search-dropdown').classList.remove('active'); return; }
+  fundSearchTimer = setTimeout(async () => {
+    try {
+      const items = await api(`/api/funds/search?q=${encodeURIComponent(q)}`);
+      const dd = $('#fund-search-dropdown');
+      if (!items || items.length === 0) {
+        dd.innerHTML = '<div class="stock-search-empty">无匹配结果</div>';
+        dd.classList.add('active');
+        return;
+      }
+      dd.innerHTML = items.map(it => `
+        <div class="stock-search-item" data-code="${escapeHtml(it.code)}" data-name="${escapeHtml(it.name)}">
+          <span class="sname">${escapeHtml(it.name)}</span>
+          <span class="scode">${escapeHtml(it.code)}</span>
+        </div>`).join('');
+      dd.classList.add('active');
+    } catch (e) { /* ignore */ }
+  }, 300);
+});
+
+$('#fund-search-dropdown').addEventListener('click', (e) => {
+  const item = e.target.closest('.stock-search-item');
+  if (!item) return;
+  const code = item.dataset.code;
+  const name = item.dataset.name;
+  $('#fund-code-hidden').value = code;
+  $('#fund-code-display').value = code;
+  $('#fund-name-input').value = name;
+  $('#fund-search-input').value = name + ' (' + code + ')';
+  $('#fund-search-dropdown').classList.remove('active');
+});
+
+// 点击其他地方关闭下拉（复用 stock-search-wrap 类）
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#fund-dialog .stock-search-wrap')) {
+    $('#fund-search-dropdown').classList.remove('active');
+  }
+});
+
+$('#fund-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const code = $('#fund-code-hidden').value.trim();
+  if (!code) { toast('请先搜索并选择基金', 'error'); return; }
+  const fund = {
+    code,
+    name: form.elements.name.value.trim(),
+    nickname: form.elements.nickname.value.trim(),
+    cooldown_minutes: Number(form.elements.cooldown_minutes.value),
+    enabled: true,
+    daily_change_up: form.elements.daily_change_up.value.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)),
+    daily_change_down: form.elements.daily_change_down.value.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)),
+    retracement_threshold: numOrNull(form.elements.retracement_threshold.value),
+    bounce_threshold: numOrNull(form.elements.bounce_threshold.value),
+    disabled_alerts: $$('.alert-type-toggle', form).filter(cb => !cb.checked).map(cb => cb.dataset.type),
+  };
+  const isEdit = fundsCache.some(f => f.code === code);
+  try {
+    if (isEdit) {
+      await api(`/api/funds/${code}`, { method: 'PUT', body: JSON.stringify(fund) });
+    } else {
+      await api('/api/funds', { method: 'POST', body: JSON.stringify(fund) });
+    }
+    toast(isEdit ? '已更新' : '已新增');
+    fundDialog.close();
+    loadFunds();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 });
 
 const dialog = $('#stock-dialog');
@@ -329,9 +524,22 @@ function updateInputStates() {
   });
 }
 
+function updateFundInputStates() {
+  const form = $('#fund-form');
+  $$('.alert-type-toggle', form).forEach(cb => {
+    const inputName = cb.dataset.input;
+    if (!inputName) return;
+    const group = $$(`.alert-type-toggle[data-input="${inputName}"]`, form);
+    const allDisabled = group.length > 0 && group.every(c => !c.checked);
+    const input = form.elements[inputName];
+    if (input) input.disabled = allDisabled;
+  });
+}
+
 // Bind toggle changes to update input states
 document.addEventListener('change', (e) => {
   if (e.target.matches('#stock-form .alert-type-toggle')) updateInputStates();
+  if (e.target.matches('#fund-form .alert-type-toggle')) updateFundInputStates();
 });
 
 $('#stock-form').addEventListener('submit', async (e) => {
@@ -430,29 +638,66 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// 导入 / 导出
-$('#btn-export').addEventListener('click', async () => {
-  const data = await api('/api/export');
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `stock-monitor-config-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
+// 导入 / 导出（带范围选择）
+$('#btn-export').addEventListener('click', () => {
+  $('#export-dialog').showModal();
 });
+
+$('#btn-export-cancel').addEventListener('click', () => $('#export-dialog').close());
+
+$('#export-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const checked = $$('#export-form input[name="scope"]:checked').map(cb => cb.value);
+  if (checked.length === 0) { toast('请至少选择一项', 'error'); return; }
+  try {
+    const scope = checked.join(',');
+    const data = await api(`/api/export?scope=${encodeURIComponent(scope)}`);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `stock-monitor-config-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    $('#export-dialog').close();
+    toast('已导出');
+  } catch (e) { toast('导出失败: ' + e.message, 'error'); }
+});
+
+let importFileData = null;
 
 $('#file-import').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  if (!confirm('导入将覆盖当前所有配置，确认继续？')) { e.target.value = ''; return; }
-  const fd = new FormData();
-  fd.append('file', file);
   try {
-    const res = await fetch('/api/import', { method: 'POST', body: fd });
+    importFileData = JSON.parse(await file.text());
+    $('#import-dialog').showModal();
+  } catch (err) {
+    toast('文件解析失败: ' + err.message, 'error');
+  }
+  e.target.value = '';
+});
+
+$('#btn-import-cancel').addEventListener('click', () => $('#import-dialog').close());
+
+$('#import-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!importFileData) { toast('请先选择文件', 'error'); return; }
+  const checked = $$('#import-form input[name="scope"]:checked').map(cb => cb.value);
+  if (checked.length === 0) { toast('请至少选择一项', 'error'); return; }
+  try {
+    const scope = checked.join(',');
+    const fd = new FormData();
+    fd.append('file', new Blob([JSON.stringify(importFileData)], { type: 'application/json' }));
+    const res = await fetch(`/api/import?scope=${encodeURIComponent(scope)}`, { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
     toast('导入成功');
+    $('#import-dialog').close();
+    importFileData = null;
     loadStocks();
+    loadFunds();
+    loadTemplates();
+    loadWebhook();
+    loadStatus();
   } catch (e) { toast('导入失败: ' + e.message, 'error'); }
-  e.target.value = '';
 });
 
 // ========== 模板 ==========
@@ -552,6 +797,7 @@ async function loadStatus() {
     ['检查次数', s.check_count],
     ['告警次数', s.alert_count],
     ['监控股票数', s.stocks.length],
+    ['监控基金数', s.funds ? s.funds.length : 0],
     ['最后检查', s.last_check_at ? new Date(s.last_check_at * 1000).toLocaleString() : '—'],
     ['最后告警', s.last_alert_at ? new Date(s.last_alert_at * 1000).toLocaleString() : '—'],
     ['启动时间', s.started_at ? new Date(s.started_at * 1000).toLocaleString() : '—'],
@@ -595,6 +841,7 @@ async function loadStatus() {
           try {
             await api('/api/settings/poll-interval', { method: 'PUT', body: JSON.stringify({ seconds: v }) });
             toast(`轮询间隔已改为 ${v}s`);
+            startQuoteRefresh();
             loadStatus();
           } catch (e) { toast('保存失败: ' + e.message, 'error'); loadStatus(); }
         };
@@ -665,6 +912,7 @@ $('#btn-sync-holidays').addEventListener('click', async () => {
 
 // ========== 初始化 ==========
 loadStocks();
+loadFunds();
 loadTemplates();
 loadWebhook();
 startQuoteRefresh();
