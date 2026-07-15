@@ -267,6 +267,7 @@ function renderFunds() {
     tr.innerHTML = `
       <td><code>${escapeHtml(f.code)}</code></td>
       <td>${escapeHtml(f.name)}</td>
+      <td>${escapeHtml(f.nickname || '—')}</td>
       <td class="${priceCellClass(q.change_percent)}">
         <div class="quote-price">${fmtPrice(q.estimated_nav)}</div>
         <div class="quote-change">${fmtChange(q.change_percent)}</div>
