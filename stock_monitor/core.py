@@ -212,58 +212,79 @@ class StockMonitor:
         self.t_events[fund_code] = []
         logger.info(f"添加监控基金: {config['name']} ({fund_code})")
 
+    # 天天基金 FundValuationLast 新估值接口（2026-07 fundgz JSONP 停用后替代）
+    FUND_VALUATION_HOSTS = [
+        "https://fundcomapi.tiantianfunds.com",
+        "https://fundcomapi.eastmoney.com",
+    ]
+    FUND_VALUATION_PATH = "/mm/newCore/FundValuationLast"
+    FUND_VALUATION_FIELDS = "FCODE,SHORTNAME,GSZZL,GZTIME,GSZ,NAV,PDATE"
+
     def fetch_fund_prices(self, fund_codes: list[str]) -> dict[str, float]:
-        """批量获取基金估算净值（天天基金 fundgz JSONP API）"""
+        """批量获取基金估算净值（天天基金 FundValuationLast 接口）
+
+        旧接口 fundgz.1234567.com.cn/js/{code}.js 已于 2026-07 停用（301→404），
+        改用官方 H5 同款 FundValuationLast JSON 接口，支持批量请求。
+        部分主动管理型基金 GSZ 可能为 null，此时仅更新上一净值、不写入估值历史。
+        """
         if not fund_codes:
             return {}
-        import re
         import requests
-        results = {}
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': 'https://fund.eastmoney.com/',
         }
+        params = {
+            'FCODES': ','.join(fund_codes),
+            'FIELDS': self.FUND_VALUATION_FIELDS,
+        }
 
-        def fetch_one(code: str) -> tuple[str, float | None]:
+        data = None
+        for host in self.FUND_VALUATION_HOSTS:
+            url = host + self.FUND_VALUATION_PATH
             try:
-                url = f"http://fundgz.1234567.com.cn/js/{code}.js"
-                resp = requests.get(url, headers=headers, timeout=10)
+                resp = requests.get(url, headers=headers, params=params, timeout=10)
                 if resp.status_code != 200:
-                    logger.error(f"获取基金 {code} 净值失败: HTTP {resp.status_code}")
-                    return code, None
-                match = re.search(r'jsonpgz\(({.*})\)', resp.text)
-                if not match:
-                    return code, None
-                data = json.loads(match.group(1))
-                last_nav = data.get("dwjz")
-                gsz = data.get("gsz")
-                try:
-                    last_nav = float(last_nav) if last_nav is not None else 0.0
-                    gsz = float(gsz) if gsz is not None else None
-                except (ValueError, TypeError):
-                    return code, None
-                self.yesterday_close[code] = last_nav
-                if gsz is not None and gsz > 0:
-                    timestamp = datetime.now()
-                    self.price_history.setdefault(code, []).append({
-                        'time': timestamp,
-                        'price': gsz,
-                    })
-                    cutoff = timestamp - timedelta(hours=24)
-                    self.price_history[code] = [p for p in self.price_history[code] if p['time'] > cutoff]
-                    return code, gsz
-                return code, None
+                    logger.error(f"基金估值接口 {host} 失败: HTTP {resp.status_code}")
+                    continue
+                payload = resp.json()
+                if isinstance(payload, dict) and payload.get("success") and isinstance(payload.get("data"), list):
+                    data = payload["data"]
+                    break
+                logger.error(f"基金估值接口 {host} 返回异常: {str(payload)[:200]}")
             except Exception as e:
-                logger.error(f"获取基金 {code} 净值异常: {e}")
-                return code, None
+                logger.error(f"基金估值接口 {host} 异常: {e}")
+                continue
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=min(len(fund_codes), 10)) as pool:
-            futures = [pool.submit(fetch_one, code) for code in fund_codes]
-            for future in as_completed(futures):
-                code, gsz = future.result()
-                if gsz is not None:
-                    results[code] = gsz
+        if data is None:
+            return {}
+
+        results = {}
+        now = datetime.now()
+        cutoff = now - timedelta(hours=24)
+        for item in data:
+            code = item.get("FCODE")
+            if not code or code not in fund_codes:
+                continue
+            nav = item.get("NAV")
+            try:
+                last_nav = float(nav) if nav is not None else 0.0
+            except (ValueError, TypeError):
+                last_nav = 0.0
+            if last_nav > 0:
+                self.yesterday_close[code] = last_nav
+            gsz = item.get("GSZ")
+            try:
+                gsz = float(gsz) if gsz is not None else None
+            except (ValueError, TypeError):
+                gsz = None
+            if gsz is not None and gsz > 0:
+                self.price_history.setdefault(code, []).append({
+                    'time': now,
+                    'price': gsz,
+                })
+                self.price_history[code] = [p for p in self.price_history[code] if p['time'] > cutoff]
+                results[code] = gsz
         return results
     
     def get_stock_price(self, stock_code: str) -> Optional[float]:

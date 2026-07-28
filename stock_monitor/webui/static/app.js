@@ -308,10 +308,11 @@ function renderFunds() {
       <td>${escapeHtml(f.name)}</td>
       <td>${escapeHtml(f.nickname || '—')}</td>
       <td class="${priceCellClass(q.change_percent)}">
-        <div class="quote-price">${fmtPrice(q.estimated_nav)}</div>
-        <div class="quote-change">${fmtChange(q.change_percent)}</div>
+        ${q.estimated_nav == null
+          ? '<div class="quote-price muted">暂无盘中估值</div><div class="quote-change">—</div>'
+          : `<div class="quote-price">${fmtPrice(q.estimated_nav)}</div><div class="quote-change">${fmtChange(q.change_percent)}</div>`}
       </td>
-      <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
+      <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : (q.nav != null ? '净值 ' + fmtPrice(q.nav) : '—')}</td>
       <td><label class="switch"><input type="checkbox" ${f.enabled ? 'checked' : ''} data-code="${escapeHtml(f.code)}" class="toggle-fund"><span class="slider"></span></label></td>
       <td>
         <button class="btn" data-fedit="${escapeHtml(f.code)}">编辑</button>
