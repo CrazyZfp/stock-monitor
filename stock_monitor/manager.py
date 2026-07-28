@@ -153,6 +153,19 @@ class MonitorManager:
             self.store.save(cfg)
         self._apply_runtime_changes()
 
+    def update_limit_exhaust(self, seconds: int, samples: int):
+        """更新封单将尽全局参数：预测耗尽秒数 + 计算平均消耗速度的轮询周期数"""
+        if seconds < 1:
+            raise ValueError("预测耗尽秒数不能小于 1")
+        if samples < 2:
+            raise ValueError("采样周期数不能小于 2")
+        with self._lock:
+            cfg = self.store.get()
+            cfg.limit_seal_exhaust_seconds = seconds
+            cfg.limit_seal_exhaust_samples = samples
+            self.store.save(cfg)
+        self._apply_runtime_changes()
+
     def update_webhook(self, webhook: str, at_mobiles: list[str] | None = None, at_user_ids: list[str] | None = None):
         with self._lock:
             cfg = self.store.get()
@@ -225,6 +238,8 @@ class MonitorManager:
             **self.stats,
             "running": self._running,
             "poll_interval_seconds": self.store.get().poll_interval_seconds,
+            "limit_seal_exhaust_seconds": self.store.get().limit_seal_exhaust_seconds,
+            "limit_seal_exhaust_samples": self.store.get().limit_seal_exhaust_samples,
             "stocks": [s.to_dict() for s in self.store.get().stocks],
             "funds": [f.to_dict() for f in self.store.get().funds],
             "config_path": str(self.store.path),

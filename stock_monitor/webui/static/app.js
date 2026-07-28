@@ -845,6 +845,7 @@ async function loadStatus() {
     ['最后告警', s.last_alert_at ? new Date(s.last_alert_at * 1000).toLocaleString() : '—'],
     ['启动时间', s.started_at ? new Date(s.started_at * 1000).toLocaleString() : '—'],
     ['轮询间隔', `${s.poll_interval_seconds}s`],
+    ['封单将尽阈值', `${s.limit_seal_exhaust_seconds}s · ${s.limit_seal_exhaust_samples}轮询`],
     ['配置文件', s.config_path],
   ];
   grid.innerHTML = cards.map(([label, value]) => `
@@ -892,6 +893,54 @@ async function loadStatus() {
         input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { input.blur(); } if (e.key === 'Escape') { loadStatus(); } });
       });
       break;
+    }
+    // 封单将尽阈值可点击编辑（两个 input：秒数 + 采样周期数）
+    if (labelEl && labelEl.textContent === '封单将尽阈值') {
+      card.classList.add('status-card-editable');
+      card.addEventListener('click', function onClick() {
+        if (card.querySelector('input')) return;
+        const curSec = s.limit_seal_exhaust_seconds;
+        const curSmp = s.limit_seal_exhaust_samples;
+        const valDiv = card.querySelector('.value');
+        valDiv.innerHTML = '';
+        const wrap = document.createElement('div');
+        wrap.style.display = 'flex';
+        wrap.style.gap = '4px';
+        wrap.style.alignItems = 'center';
+        const iSec = document.createElement('input');
+        iSec.type = 'number'; iSec.min = 1; iSec.value = curSec; iSec.style.width = '64px';
+        const iSmp = document.createElement('input');
+        iSmp.type = 'number'; iSmp.min = 2; iSmp.value = curSmp; iSmp.style.width = '64px';
+        wrap.appendChild(iSec);
+        wrap.appendChild(document.createTextNode('s·'));
+        wrap.appendChild(iSmp);
+        wrap.appendChild(document.createTextNode('轮询'));
+        valDiv.appendChild(wrap);
+        iSec.focus(); iSec.select();
+        let saved = false;
+        const save = async () => {
+          if (saved) return; saved = true;
+          const sec = parseInt(iSec.value, 10);
+          const smp = parseInt(iSmp.value, 10);
+          if (isNaN(sec) || sec < 1 || isNaN(smp) || smp < 2) { loadStatus(); return; }
+          try {
+            await api('/api/settings/limit-exhaust', { method: 'PUT', body: JSON.stringify({ seconds: sec, samples: smp }) });
+            toast(`封单将尽阈值已改为 ${sec}s · ${smp}轮询`);
+            loadStatus();
+          } catch (e) { toast('保存失败: ' + e.message, 'error'); loadStatus(); }
+        };
+        // 仅当两个 input 都失焦且焦点未在另一个 input 上时才保存（避免在两个框间切换误触发）
+        const maybeSave = (e) => {
+          if (saved) return;
+          const other = e.relatedTarget;
+          if (other === iSec || other === iSmp) return; // 焦点转到另一个 input，不保存
+          save();
+        };
+        [iSec, iSmp].forEach(inp => {
+          inp.addEventListener('blur', maybeSave);
+          inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { inp.blur(); } if (e.key === 'Escape') { loadStatus(); } });
+        });
+      });
     }
   }
 }

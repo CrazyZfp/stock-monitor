@@ -510,6 +510,20 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
         manager.update_poll_interval(seconds)
         return {"ok": True, "poll_interval_seconds": seconds}
 
+    @router.put("/settings/limit-exhaust")
+    def put_limit_exhaust(payload: dict):
+        seconds = int(payload.get("seconds", 30))
+        samples = int(payload.get("samples", 3))
+        if seconds < 1:
+            raise HTTPException(400, "预测耗尽秒数不能小于 1")
+        if samples < 2:
+            raise HTTPException(400, "采样周期数不能小于 2")
+        try:
+            manager.update_limit_exhaust(seconds, samples)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "limit_seal_exhaust_seconds": seconds, "limit_seal_exhaust_samples": samples}
+
     # ----- 动作 -----
     @router.post("/actions/test-notify")
     def test_notify(payload: TestNotifyIn = TestNotifyIn()):
