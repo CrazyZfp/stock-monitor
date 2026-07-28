@@ -892,7 +892,6 @@ async function loadStatus() {
         input.addEventListener('blur', save);
         input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { input.blur(); } if (e.key === 'Escape') { loadStatus(); } });
       });
-      break;
     }
     // 封单将尽阈值可点击编辑（两个 input：秒数 + 采样周期数）
     if (labelEl && labelEl.textContent === '封单将尽阈值') {

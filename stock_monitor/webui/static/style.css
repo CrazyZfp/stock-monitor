@@ -116,7 +116,7 @@ td.limit-down .limit-seal { color: #047857; }
 .status-card .value.error { color: #dc2626; }
 .status-card-editable { cursor: pointer; position: relative; transition: background .15s, border-color .15s; }
 .status-card-editable:hover { background: #f0f7ff; border-color: #93c5fd; }
-.status-card-editable::after { content: '✎'; position: absolute; right: 10px; top: 10px; font-size: 12px; color: #9ca3af; transition: color .15s; }
+.status-card-editable::after { content: '⚙'; position: absolute; right: 10px; top: 10px; font-size: 12px; color: #9ca3af; transition: color .15s; }
 .status-card-editable:hover::after { color: #3b82f6; }
 
 /* ===== Toast ===== */
