@@ -382,6 +382,91 @@ class TestMultiTierStock:
         assert data["daily_change_up"] == [50.0]
 
 
+class TestLimitAlerts:
+    def test_stock_with_limit_seal_min_lots(self, client: TestClient):
+        """创建股票应能存储 limit_seal_min_lots 字段"""
+        r = client.post("/api/stocks", json={
+            "code": "sz1", "name": "A", "limit_seal_min_lots": 50000,
+        })
+        assert r.status_code == 201
+        assert r.json()["limit_seal_min_lots"] == 50000
+
+    def test_list_stock_includes_limit_seal_field(self, client: TestClient):
+        client.post("/api/stocks", json={"code": "sz1", "name": "A", "limit_seal_min_lots": 30000})
+        data = client.get("/api/stocks").json()[0]
+        assert data["limit_seal_min_lots"] == 30000
+
+    def test_preview_limit_up_placeholders(self, client: TestClient):
+        """涨停封板模板预览应渲染封单手数与金额"""
+        client.post("/api/stocks", json={"code": "sz1", "name": "测试股", "price_high": 11.0})
+        r = client.post("/api/templates/preview", json={
+            "template": "🔴 {name} 涨停 封单{sealed_lots}手 {sealed_amount}万元",
+            "alert_type": "limit_up",
+            "stock_code": "sz1",
+        })
+        assert r.status_code == 200
+        rendered = r.json()["rendered"]
+        assert "🔴 测试股 涨停" in rendered
+        assert "手" in rendered
+        assert "万元" in rendered
+
+    def test_preview_limit_down(self, client: TestClient):
+        r = client.post("/api/templates/preview", json={
+            "template": "🟢 {name} 跌停 封单{sealed_lots}手",
+            "alert_type": "limit_down",
+        })
+        assert r.status_code == 200
+        assert "跌停" in r.json()["rendered"]
+
+    def test_preview_limit_up_broken(self, client: TestClient):
+        r = client.post("/api/templates/preview", json={
+            "template": "🟡 {name} 涨停开板 现{price}",
+            "alert_type": "limit_up_broken",
+        })
+        assert r.status_code == 200
+        assert "开板" in r.json()["rendered"]
+
+    def test_preview_low_seal_uses_stock_threshold(self, client: TestClient):
+        client.post("/api/stocks", json={"code": "sz1", "name": "A", "limit_seal_min_lots": 12345})
+        r = client.post("/api/templates/preview", json={
+            "template": "{name} 封单不足{seal_min_lots}手 现{sealed_lots}手",
+            "alert_type": "limit_up_low_seal",
+            "stock_code": "sz1",
+        })
+        assert r.status_code == 200
+        assert "12,345" in r.json()["rendered"]
+
+    def test_preview_exhaust_eta(self, client: TestClient):
+        r = client.post("/api/templates/preview", json={
+            "template": "封单将尽 预计{seal_eta_seconds}秒耗尽",
+            "alert_type": "limit_up_exhaust",
+        })
+        assert r.status_code == 200
+        assert "秒耗尽" in r.json()["rendered"]
+
+    def test_preview_unknown_limit_type_rejected(self, client: TestClient):
+        r = client.post("/api/templates/preview", json={
+            "template": "x",
+            "alert_type": "limit_invalid",
+        })
+        assert r.status_code == 400
+
+    def test_preview_unknown_limit_placeholder_rejected(self, client: TestClient):
+        r = client.post("/api/templates/preview", json={
+            "template": "{nonexistent_limit_field}",
+            "alert_type": "limit_up",
+        })
+        assert r.status_code == 400
+
+    def test_default_templates_include_limit_types(self, client: TestClient):
+        """默认配置应包含 8 个涨跌停模板"""
+        r = client.get("/api/config")
+        templates = r.json()["disguise_templates"]
+        for t in ("limit_up", "limit_up_broken", "limit_up_low_seal", "limit_up_exhaust",
+                  "limit_down", "limit_down_broken", "limit_down_low_seal", "limit_down_exhaust"):
+            assert t in templates
+
+
 class TestStaticUI:
     def test_root_serves_html(self, client: TestClient):
         """根路径应返回 index.html"""

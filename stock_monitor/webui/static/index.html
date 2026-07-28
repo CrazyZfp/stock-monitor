@@ -41,6 +41,7 @@
             <th>昵称</th>
             <th>报价</th>
             <th>当前涨速</th>
+            <th>涨跌停</th>
             <th>时间</th>
             <th>启用</th>
             <th>操作</th>
@@ -102,6 +103,11 @@
           <tr><td><code>{t_type}</code></td><td>做T操作类型</td><td><code>t_sell</code> / <code>t_buy</code></td><td><code>S</code> 表示先卖后买，<code>B</code> 表示先买后卖</td></tr>
           <tr><td><code>{t_price}</code></td><td>做T事件价格</td><td><code>t_sell</code> / <code>t_buy</code></td><td>添加 S/B 事件时记录的价格</td></tr>
           <tr><td><code>{t_threshold}</code></td><td>做T百分比</td><td><code>t_sell</code> / <code>t_buy</code></td><td>取自股票配置的做T阈值，格式如 <code>3.00%</code></td></tr>
+          <tr><td><code>{limit_price}</code></td><td>涨/跌停价</td><td><code>limit_up</code> / <code>limit_down</code> 等</td><td>涨停或跌停价，格式如 <code>11.00</code></td></tr>
+          <tr><td><code>{sealed_lots}</code></td><td>封单手数</td><td>涨跌停相关</td><td>封单量（手，1手=100股），带千分位如 <code>100,000</code></td></tr>
+          <tr><td><code>{sealed_amount}</code></td><td>封单金额</td><td>涨跌停相关</td><td>封单金额（万元），如 <code>11,000.00</code></td></tr>
+          <tr><td><code>{seal_min_lots}</code></td><td>封单不足阈值</td><td><code>limit_up_low_seal</code> / <code>limit_down_low_seal</code></td><td>取自股票配置，手</td></tr>
+          <tr><td><code>{seal_eta_seconds}</code></td><td>预计耗尽秒数</td><td><code>limit_up_exhaust</code> / <code>limit_down_exhaust</code></td><td>按近期平均消耗速度预测的剩余秒数</td></tr>
         </tbody>
       </table>
       </details>
@@ -205,6 +211,86 @@
         <div class="preview-row">
           <button type="button" class="btn btn-preview" data-type="t_buy">预览</button>
           <div class="preview-box" id="preview-t_buy" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>limit_up (涨停封板)</label>
+          <textarea name="limit_up" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="limit_up">预览</button>
+          <div class="preview-box" id="preview-limit_up" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>limit_up_broken (涨停开板)</label>
+          <textarea name="limit_up_broken" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="limit_up_broken">预览</button>
+          <div class="preview-box" id="preview-limit_up_broken" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>limit_up_low_seal (涨停封单不足)</label>
+          <textarea name="limit_up_low_seal" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="limit_up_low_seal">预览</button>
+          <div class="preview-box" id="preview-limit_up_low_seal" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>limit_up_exhaust (涨停封单将尽)</label>
+          <textarea name="limit_up_exhaust" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="limit_up_exhaust">预览</button>
+          <div class="preview-box" id="preview-limit_up_exhaust" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>limit_down (跌停封板)</label>
+          <textarea name="limit_down" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="limit_down">预览</button>
+          <div class="preview-box" id="preview-limit_down" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>limit_down_broken (跌停开板)</label>
+          <textarea name="limit_down_broken" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="limit_down_broken">预览</button>
+          <div class="preview-box" id="preview-limit_down_broken" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>limit_down_low_seal (跌停封单不足)</label>
+          <textarea name="limit_down_low_seal" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="limit_down_low_seal">预览</button>
+          <div class="preview-box" id="preview-limit_down_low_seal" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>limit_down_exhaust (跌停封单将尽)</label>
+          <textarea name="limit_down_exhaust" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="limit_down_exhaust">预览</button>
+          <div class="preview-box" id="preview-limit_down_exhaust" hidden></div>
         </div>
       </div>
       <button class="btn btn-primary" type="submit">保存模板</button>
@@ -340,6 +426,15 @@
       <div class="form-row"><label>回撤阈值 % (空=不启用)</label><div class="input-with-toggle"><input name="retracement_threshold" type="number" step="0.1" placeholder="高位回落"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="retracement" data-input="retracement_threshold" checked> 通知</label></div></div>
       <div class="form-row"><label>反弹阈值 % (空=不启用)</label><div class="input-with-toggle"><input name="bounce_threshold" type="number" step="0.1" placeholder="低位回升"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="bounce" data-input="bounce_threshold" checked> 通知</label></div></div>
       <div class="form-row"><label>做T阈值 % (空=不启用)</label><div class="input-with-toggle"><input name="t_threshold" type="number" step="0.1" placeholder="S跌/B涨此百分比通知"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="t_sell" data-input="t_threshold" checked> 卖</label><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="t_buy" data-input="t_threshold" checked> 买</label></div></div>
+      <div class="form-row"><label>封单不足阈值 (手，空=不监控)</label><div class="input-with-toggle"><input name="limit_seal_min_lots" type="number" step="1" placeholder="封板期间封单低于此手数告警"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="limit_up_low_seal" data-input="limit_seal_min_lots" checked> 涨</label><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="limit_down_low_seal" data-input="limit_seal_min_lots" checked> 跌</label></div></div>
+      <div class="form-row-checkbox limit-toggles">
+        <label><input type="checkbox" class="alert-type-toggle" data-type="limit_up" checked> 涨停封板</label>
+        <label><input type="checkbox" class="alert-type-toggle" data-type="limit_up_broken" checked> 涨停开板</label>
+        <label><input type="checkbox" class="alert-type-toggle" data-type="limit_up_exhaust" checked> 涨停封单将尽</label>
+        <label><input type="checkbox" class="alert-type-toggle" data-type="limit_down" checked> 跌停封板</label>
+        <label><input type="checkbox" class="alert-type-toggle" data-type="limit_down_broken" checked> 跌停开板</label>
+        <label><input type="checkbox" class="alert-type-toggle" data-type="limit_down_exhaust" checked> 跌停封单将尽</label>
+      </div>
       <div class="form-row"><label>通知冷却 (分钟)</label><input name="cooldown_minutes" type="number" value="5" min="1"></div>
       <div class="form-row-checkbox">
         <label><input type="checkbox" name="t_s_enabled" checked> 启用做S</label>

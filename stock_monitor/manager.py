@@ -272,6 +272,44 @@ class MonitorManager:
                     "change_percent": change,
                     "as_of": int(latest["time"].timestamp()),
                 }
+                # 涨跌停状态 + 封单（来自 monitor 行情快照）
+                qk = self.monitor._latest_quote.get(stock.code)
+                stt = self.monitor._limit_state.get(stock.code)
+                if qk and stt:
+                    up_p, down_p, _ratio = self.monitor._compute_limit_prices(
+                        stock.code, qk.get('name', ''), qk.get('prev_close', 0.0))
+                    if up_p is not None:
+                        bid1_price = qk.get('bid1_price', 0.0)
+                        ask1_price = qk.get('ask1_price', 0.0)
+                        bid1_vol = qk.get('bid1_vol', 0.0)
+                        ask1_vol = qk.get('ask1_vol', 0.0)
+                        is_up = abs(latest["price"] - up_p) < 0.005 and (ask1_price == 0 or ask1_vol == 0)
+                        is_down = abs(latest["price"] - down_p) < 0.005 and (bid1_price == 0 or bid1_vol == 0)
+                        if is_up:
+                            seal_vol = bid1_vol
+                            quote["limit_status"] = "limit_up"
+                            quote["limit_price"] = up_p
+                        elif is_down:
+                            seal_vol = ask1_vol
+                            quote["limit_status"] = "limit_down"
+                            quote["limit_price"] = down_p
+                        else:
+                            seal_vol = 0
+                            quote["limit_status"] = "normal"
+                        if seal_vol > 0:
+                            quote["sealed_lots"] = int(round(seal_vol / 100.0))
+                            quote["sealed_amount"] = round(seal_vol * quote.get("limit_price", 0) / 10000.0, 2)
+                        else:
+                            quote["sealed_lots"] = 0
+                            quote["sealed_amount"] = 0.0
+                    else:
+                        quote["limit_status"] = "unknown"
+                        quote["sealed_lots"] = 0
+                        quote["sealed_amount"] = 0.0
+                else:
+                    quote["limit_status"] = "unknown"
+                    quote["sealed_lots"] = 0
+                    quote["sealed_amount"] = 0.0
                 # 当前涨速：speed_window 内最早一笔到当前价的涨跌幅
                 speed_window = getattr(stock, 'speed_window', 5)
                 period_start = datetime.now() - timedelta(minutes=speed_window)
@@ -449,6 +487,7 @@ class MonitorManager:
             "daily_change_down": list(s.daily_change_down),
             "retracement_threshold": s.retracement_threshold,
             "bounce_threshold": s.bounce_threshold,
+            "limit_seal_min_lots": s.limit_seal_min_lots,
             "t_threshold": s.t_threshold,
             "t_events": list(s.t_events),
             "t_s_enabled": s.t_s_enabled,
@@ -495,6 +534,11 @@ class MonitorManager:
             self.monitor.peak_since_high_alert.pop(code, None)
             self.monitor.valley_since_low_alert.pop(code, None)
             self.monitor.t_events.pop(code, None)
+            self.monitor._latest_quote.pop(code, None)
+            self.monitor._limit_state.pop(code, None)
+            self.monitor._seal_history.pop(code, None)
+            self.monitor._low_seal_fired.pop(code, None)
+            self.monitor._exhaust_fired.pop(code, None)
 
     def _apply_fund_change(self, code: str):
         with self._lock:
@@ -533,6 +577,8 @@ class MonitorManager:
             self.monitor.at_mobiles = list(cfg.at_mobiles)
             self.monitor.at_user_ids = list(cfg.at_user_ids)
             self.interval_seconds = cfg.poll_interval_seconds
+            self.monitor._limit_exhaust_seconds = cfg.limit_seal_exhaust_seconds
+            self.monitor._limit_exhaust_samples = cfg.limit_seal_exhaust_samples
             if cfg.disguise_templates:
                 self.monitor.disguise_templates = {
                     k: list(v) for k, v in cfg.disguise_templates.items()

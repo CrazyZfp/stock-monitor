@@ -54,6 +54,16 @@ td.quote-up   { color: #dc2626; font-weight: 600; }
 td.quote-down { color: #10b981; font-weight: 600; }
 td.quote-flat { color: #6b7280; }
 
+/* 涨跌停封单单元格（A 股：红涨绿跌） */
+td.limit-cell { font-size: 12px; white-space: nowrap; }
+td.limit-up .limit-tag { color: #dc2626; font-weight: 600; }
+td.limit-up .limit-seal { color: #b91c1c; }
+td.limit-down .limit-tag { color: #10b981; font-weight: 600; }
+td.limit-down .limit-seal { color: #047857; }
+.limit-cell .limit-seal { display: block; font-variant-numeric: tabular-nums; color: #6b7280; }
+.limit-toggles { flex-wrap: wrap; gap: 8px 14px; }
+.limit-toggles label { font-size: 13px; color: #374151; }
+
 /* ===== 表单 ===== */
 .form-row { margin-bottom: 14px; }
 .code-name-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }

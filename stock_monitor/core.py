@@ -70,6 +70,16 @@ class StockMonitor:
         # 价格数据延迟（API 时间戳与本地时间之差，秒）
         self._price_latency: Optional[float] = None
 
+        # 涨跌停封单告警运行时状态
+        self._latest_quote: dict[str, dict] = {}        # 最新行情快照（含买卖盘）
+        self._limit_state: dict[str, dict] = {}          # {is_limit_up, is_limit_down, _init}
+        self._seal_history: dict[str, list] = {}         # 封板期间 (ts, seal_vol_股) 历史
+        self._low_seal_fired: dict[str, bool] = {}
+        self._exhaust_fired: dict[str, bool] = {}
+        # 全局参数（由 manager._apply_runtime_changes 下发）
+        self._limit_exhaust_seconds: int = 30
+        self._limit_exhaust_samples: int = 3
+
         # 伪装消息模板（看起来像普通聊天）
         self.disguise_templates = {
             'price_high': [
@@ -101,6 +111,30 @@ class StockMonitor:
             ],
             't_buy': [
                 "🟢 {name} 做T可卖出：{t_price}→{price}（涨{t_threshold}%）"
+            ],
+            'limit_up': [
+                "🔴 {name} 涨停 封单{sealed_lots}手 {sealed_amount}万元"
+            ],
+            'limit_up_broken': [
+                "🟡 {name} 涨停开板 现{price}"
+            ],
+            'limit_up_low_seal': [
+                "⚠️ {name} 涨停封单不足{seal_min_lots}手 现{sealed_lots}手"
+            ],
+            'limit_up_exhaust': [
+                "⚠️ {name} 涨停封单将尽 预计{seal_eta_seconds}秒耗尽"
+            ],
+            'limit_down': [
+                "🟢 {name} 跌停 封单{sealed_lots}手 {sealed_amount}万元"
+            ],
+            'limit_down_broken': [
+                "🟡 {name} 跌停开板 现{price}"
+            ],
+            'limit_down_low_seal': [
+                "⚠️ {name} 跌停封单不足{seal_min_lots}手 现{sealed_lots}手"
+            ],
+            'limit_down_exhaust': [
+                "⚠️ {name} 跌停封单将尽 预计{seal_eta_seconds}秒耗尽"
             ],
         }
     
@@ -146,6 +180,12 @@ class StockMonitor:
         self.price_low_alerted_daily[stock_code] = set()
         self.peak_since_high_alert[stock_code] = 0.0
         self.valley_since_low_alert[stock_code] = float('inf')
+        # 涨跌停封单告警状态
+        self._latest_quote[stock_code] = {}
+        self._limit_state[stock_code] = {'is_limit_up': False, 'is_limit_down': False, '_init': False}
+        self._seal_history[stock_code] = []
+        self._low_seal_fired[stock_code] = False
+        self._exhaust_fired[stock_code] = False
         self.t_events[stock_code] = list(config.get('t_events', []))
         logger.info(f"添加监控股票: {config['name']} ({stock_code})")
 
@@ -311,6 +351,25 @@ class StockMonitor:
                     except (ValueError, IndexError):
                         pass
                     self.yesterday_close[code] = yesterday
+                    # 解析买卖盘（用于涨跌停封单判定：买一量/价 parts[10/11]，卖一量/价 parts[20/21]）
+                    bid1_vol = ask1_vol = 0.0
+                    bid1_price = ask1_price = 0.0
+                    try:
+                        bid1_vol = float(parts[10])
+                        bid1_price = float(parts[11])
+                        ask1_vol = float(parts[20])
+                        ask1_price = float(parts[21])
+                    except (ValueError, IndexError):
+                        pass
+                    self._latest_quote[code] = {
+                        'name': parts[0] if parts else '',
+                        'prev_close': yesterday,
+                        'price': current_price,
+                        'bid1_vol': bid1_vol,
+                        'bid1_price': bid1_price,
+                        'ask1_vol': ask1_vol,
+                        'ask1_price': ask1_price,
+                    }
                     # 解析 API 返回的时间戳计算延迟
                     if len(parts) > 31:
                         try:
@@ -334,6 +393,173 @@ class StockMonitor:
         except Exception as e:
             logger.error(f"批量获取价格异常: {e}")
             return {}
+
+    @staticmethod
+    def _round_half_up_2(x: float) -> float:
+        """A 股价格四舍五入到 2 位（round half up，非 banker）"""
+        from decimal import Decimal, ROUND_HALF_UP
+        return float(Decimal(str(x)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+
+    @staticmethod
+    def _limit_ratio(code: str, name: str) -> float:
+        """按板块 + ST 标识返回涨跌幅限制（小数）"""
+        nm = (name or '').strip().upper()
+        if nm.startswith('*ST') or nm.startswith('ST'):
+            return 0.05
+        c = code.lower()
+        if c.startswith(('sh688', 'sz300', 'sz301')):
+            return 0.20
+        if c.startswith('bj'):
+            return 0.30
+        return 0.10
+
+    def _compute_limit_prices(self, code: str, name: str, prev_close: float):
+        """返回 (涨停价, 跌停价, ratio)；prev_close<=0 返回 (None,None,0)"""
+        if not prev_close or prev_close <= 0:
+            return None, None, 0.0
+        ratio = StockMonitor._limit_ratio(code, name)
+        up = StockMonitor._round_half_up_2(prev_close * (1 + ratio))
+        down = StockMonitor._round_half_up_2(prev_close * (1 - ratio))
+        return up, down, ratio
+
+    def _send_limit_alert(self, alert_type: str, config: Dict, current_price: float,
+                         limit_price: float, seal_vol: float, prev_close: float,
+                         stock_code: str, *, seal_eta_seconds: Optional[int] = None):
+        """组装涨跌停封单告警消息并发送"""
+        seal_lots = int(round(seal_vol / 100.0)) if seal_vol > 0 else 0
+        sealed_amount = (seal_vol * limit_price / 10000.0) if (seal_vol > 0 and limit_price) else 0.0
+        daily_change = None
+        if prev_close > 0:
+            daily_change = (current_price - prev_close) / prev_close * 100
+        self.send_dingding_notification(
+            self.generate_disguise_message(
+                alert_type, config, current_price,
+                limit_price=limit_price,
+                sealed_lots=seal_lots,
+                sealed_amount=sealed_amount,
+                seal_min_lots=config.get('limit_seal_min_lots'),
+                seal_eta_seconds=seal_eta_seconds,
+                daily_change=daily_change,
+            )
+        )
+
+    def check_limit_status(self, stock_code: str, current_price: float):
+        """涨跌停封单告警：封板 / 开板 / 封单不足 / 封单将尽"""
+        if stock_code not in self._limit_state:
+            return  # 基金或未初始化
+        q = self._latest_quote.get(stock_code, {})
+        if not q:
+            return
+        prev_close = q.get('prev_close', 0.0) or self.yesterday_close.get(stock_code, 0.0)
+        up_price, down_price, ratio = self._compute_limit_prices(stock_code, q.get('name', ''), prev_close)
+        if up_price is None or ratio == 0:
+            return
+        config = self.stocks[stock_code]
+        disabled = set(config.get('disabled_alerts', []))
+        state = self._limit_state[stock_code]
+        bid1_price = q.get('bid1_price', 0.0)
+        ask1_price = q.get('ask1_price', 0.0)
+        bid1_vol = q.get('bid1_vol', 0.0)
+        ask1_vol = q.get('ask1_vol', 0.0)
+
+        # 涨停：现价≈涨停价 且 无卖盘；跌停对称
+        sealed_up = abs(current_price - up_price) < 0.005 and (ask1_price == 0 or ask1_vol == 0)
+        sealed_down = abs(current_price - down_price) < 0.005 and (bid1_price == 0 or bid1_vol == 0)
+        prev_up = state['is_limit_up']
+        prev_down = state['is_limit_down']
+
+        if not state['_init']:
+            state['_init'] = True
+            state['is_limit_up'] = sealed_up
+            state['is_limit_down'] = sealed_down
+            self._seal_history[stock_code] = []
+            self._low_seal_fired[stock_code] = False
+            self._exhaust_fired[stock_code] = False
+            return
+
+        lim_price = up_price if sealed_up else (down_price if sealed_down else None)
+
+        # --- 封板 / 开板（涨停）---
+        if sealed_up and not prev_up:
+            self._seal_history[stock_code] = [(datetime.now(), bid1_vol)]
+            self._low_seal_fired[stock_code] = False
+            self._exhaust_fired[stock_code] = False
+            if 'limit_up' not in disabled and self.check_cooldown(stock_code, 'limit_up'):
+                self._send_limit_alert('limit_up', config, current_price, up_price, bid1_vol, prev_close, stock_code)
+                self.update_cooldown(stock_code, 'limit_up')
+        elif (not sealed_up) and prev_up:
+            if 'limit_up_broken' not in disabled and self.check_cooldown(stock_code, 'limit_up_broken'):
+                self._send_limit_alert('limit_up_broken', config, current_price, up_price, 0.0, prev_close, stock_code)
+                self.update_cooldown(stock_code, 'limit_up_broken')
+            self._seal_history[stock_code] = []
+            self._low_seal_fired[stock_code] = False
+            self._exhaust_fired[stock_code] = False
+
+        # --- 封板 / 开板（跌停）---
+        if sealed_down and not prev_down:
+            self._seal_history[stock_code] = [(datetime.now(), ask1_vol)]
+            self._low_seal_fired[stock_code] = False
+            self._exhaust_fired[stock_code] = False
+            if 'limit_down' not in disabled and self.check_cooldown(stock_code, 'limit_down'):
+                self._send_limit_alert('limit_down', config, current_price, down_price, ask1_vol, prev_close, stock_code)
+                self.update_cooldown(stock_code, 'limit_down')
+        elif (not sealed_down) and prev_down:
+            if 'limit_down_broken' not in disabled and self.check_cooldown(stock_code, 'limit_down_broken'):
+                self._send_limit_alert('limit_down_broken', config, current_price, down_price, 0.0, prev_close, stock_code)
+                self.update_cooldown(stock_code, 'limit_down_broken')
+            self._seal_history[stock_code] = []
+            self._low_seal_fired[stock_code] = False
+            self._exhaust_fired[stock_code] = False
+
+        state['is_limit_up'] = sealed_up
+        state['is_limit_down'] = sealed_down
+
+        # --- 封板期间：封单不足 / 封单将尽 ---
+        if not sealed_up and not sealed_down:
+            return
+        seal_vol = bid1_vol if sealed_up else ask1_vol
+        low_type = 'limit_up_low_seal' if sealed_up else 'limit_down_low_seal'
+        exhaust_type = 'limit_up_exhaust' if sealed_up else 'limit_down_exhaust'
+        if seal_vol <= 0:
+            return
+        now = datetime.now()
+        hist = self._seal_history.setdefault(stock_code, [])
+        hist.append((now, seal_vol))
+        n = max(2, self._limit_exhaust_samples)
+        if len(hist) > n:
+            self._seal_history[stock_code] = hist[-n:]
+            hist = self._seal_history[stock_code]
+        seal_lots = seal_vol / 100.0
+
+        # 封单不足
+        min_lots = config.get('limit_seal_min_lots')
+        if min_lots:
+            if seal_lots < min_lots and not self._low_seal_fired[stock_code]:
+                if low_type not in disabled and self.check_cooldown(stock_code, low_type):
+                    self._send_limit_alert(low_type, config, current_price, lim_price, seal_vol, prev_close, stock_code)
+                    self.update_cooldown(stock_code, low_type)
+                self._low_seal_fired[stock_code] = True
+            elif seal_lots >= min_lots:
+                self._low_seal_fired[stock_code] = False
+
+        # 封单将尽：按最近 N 个样本的平均消耗速度预测 ETA
+        if len(hist) >= self._limit_exhaust_samples:
+            t0, v0 = hist[0]
+            t1, v1 = hist[-1]
+            elapsed = (t1 - t0).total_seconds()
+            consumed = v0 - v1  # 正数 = 封单被消耗
+            if elapsed > 0 and consumed > 0:
+                rate = consumed / elapsed  # 股/秒
+                eta = v1 / rate
+                if eta <= self._limit_exhaust_seconds and not self._exhaust_fired[stock_code]:
+                    if exhaust_type not in disabled and self.check_cooldown(stock_code, exhaust_type):
+                        self._send_limit_alert(exhaust_type, config, current_price, lim_price,
+                                               seal_vol, prev_close, stock_code,
+                                               seal_eta_seconds=int(round(eta)))
+                        self.update_cooldown(stock_code, exhaust_type)
+                    self._exhaust_fired[stock_code] = True
+                elif eta > self._limit_exhaust_seconds:
+                    self._exhaust_fired[stock_code] = False
 
     def check_cooldown(self, stock_code: str, alert_type: str) -> bool:
         """
@@ -363,7 +589,12 @@ class StockMonitor:
                                  daily_change: float = None, speed_change: float = None,
                                  retrace_pct: float = None, bounce_pct: float = None,
                                  t_type: str = None, t_price: float = None,
-                                 t_threshold: float = None,) -> str:
+                                 t_threshold: float = None,
+                                 limit_price: float = None,
+                                 sealed_lots: int = None,
+                                 sealed_amount: float = None,
+                                 seal_min_lots: int = None,
+                                 seal_eta_seconds: int = None,) -> str:
         import random
 
         template = random.choice(self.disguise_templates[alert_type])
@@ -391,6 +622,11 @@ class StockMonitor:
             t_type=str(t_type) if t_type is not None else "",
             t_price=f"{t_price:.2f}" if t_price is not None else "",
             t_threshold=f"{t_threshold:.2f}%" if t_threshold is not None else "",
+            limit_price=f"{limit_price:.2f}" if limit_price is not None else "",
+            sealed_lots=f"{sealed_lots:,}" if sealed_lots is not None else "",
+            sealed_amount=f"{sealed_amount:,.2f}" if sealed_amount is not None else "",
+            seal_min_lots=f"{seal_min_lots:,}" if seal_min_lots is not None else "",
+            seal_eta_seconds=str(seal_eta_seconds) if seal_eta_seconds is not None else "",
         )
 
         message += '.'
@@ -793,6 +1029,17 @@ class StockMonitor:
             self.retracement_armed[code] = False
         for code in self.bounce_armed:
             self.bounce_armed[code] = False
+        # 涨跌停封单状态重置
+        for st in self._limit_state.values():
+            st['is_limit_up'] = False
+            st['is_limit_down'] = False
+            st['_init'] = False
+        for code in self._seal_history:
+            self._seal_history[code] = []
+        for code in self._low_seal_fired:
+            self._low_seal_fired[code] = False
+        for code in self._exhaust_fired:
+            self._exhaust_fired[code] = False
         for code, events in stock_t_events.items():
             if code in self.t_events:
                 self.t_events[code] = list(events)
@@ -818,6 +1065,9 @@ class StockMonitor:
         
         # 3. 检查做T事件
         self.check_t_events(stock_code, current_price)
+
+        # 4. 检查涨跌停封单
+        self.check_limit_status(stock_code, current_price)
     
     @staticmethod
     def is_trading_day(date_obj) -> bool:

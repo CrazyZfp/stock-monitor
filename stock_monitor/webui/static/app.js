@@ -44,6 +44,42 @@ function priceCellClass(change) {
   return 'quote-flat';
 }
 
+function limitCellClass(status) {
+  if (status === 'limit_up') return 'limit-up';
+  if (status === 'limit_down') return 'limit-down';
+  return '';
+}
+
+function fmtLots(n) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString();
+}
+
+function fmtAmountWan(v) {
+  if (v == null || v === 0) return '0.00';
+  const w = Number(v);
+  if (w >= 10000) return `${(w / 10000).toFixed(2)}亿`;
+  return w.toFixed(2);
+}
+
+function renderLimit(q) {
+  const s = q.limit_status;
+  if (s == null || s === 'unknown') return '<span class="muted">—</span>';
+  if (s === 'normal') return '<span class="muted">正常</span>';
+  const label = s === 'limit_up' ? '涨停' : '跌停';
+  const lots = q.sealed_lots || 0;
+  const amt = q.sealed_amount || 0;
+  return `<span class="limit-tag">${label}</span><span class="limit-seal">${fmtLots(lots)}手 / ${fmtAmountWan(amt)}万</span>`;
+}
+
+function limitTitle(q) {
+  const s = q.limit_status;
+  if (s === 'limit_up' || s === 'limit_down') {
+    return `封板价 ${fmtPrice(q.limit_price)}　封单 ${fmtLots(q.sealed_lots)}手`;
+  }
+  return '';
+}
+
 // ========== Tabs ==========
 $$('.tab').forEach(btn => btn.addEventListener('click', () => {
   $$('.tab').forEach(b => b.classList.remove('active'));
@@ -101,6 +137,9 @@ function renderStocks() {
       </td>
       <td class="${q.surge_change != null ? priceCellClass(q.surge_change) : ''}" title="${q.surge_change != null ? `基准价: ${fmtPrice(q.surge_base_price)} @ ${new Date(q.surge_base_time * 1000).toLocaleString()}` : ''}">
         ${q.surge_change != null ? fmtChange(q.surge_change) : '—'}
+      </td>
+      <td class="limit-cell ${limitCellClass(q.limit_status)}" title="${limitTitle(q)}">
+        ${renderLimit(q)}
       </td>
       <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
       <td><label class="switch"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-code="${escapeHtml(s.code)}" class="toggle"><span class="slider"></span></label></td>
@@ -562,6 +601,7 @@ $('#stock-form').addEventListener('submit', async (e) => {
     daily_change_down: form.elements.daily_change_down.value.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)),
     retracement_threshold: numOrNull(form.elements.retracement_threshold.value),
     bounce_threshold: numOrNull(form.elements.bounce_threshold.value),
+    limit_seal_min_lots: intOrNull(form.elements.limit_seal_min_lots.value),
     t_threshold: numOrNull(form.elements.t_threshold.value),
     t_s_enabled: form.elements.t_s_enabled.checked,
     t_b_enabled: form.elements.t_b_enabled.checked,
@@ -581,6 +621,7 @@ $('#stock-form').addEventListener('submit', async (e) => {
 });
 
 function numOrNull(v) { return v === '' ? null : Number(v); }
+function intOrNull(v) { return v === '' ? null : parseInt(v, 10); }
 
 function resetSearch() {
   $('#stock-search-input').value = '';
@@ -714,7 +755,7 @@ $('#templates-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const templates = {};
-  for (const key of ['price_high', 'price_low', 'daily_up', 'daily_down', 'surge_up', 'surge_down', 'retracement', 'bounce', 't_sell', 't_buy']) {
+  for (const key of ['price_high', 'price_low', 'daily_up', 'daily_down', 'surge_up', 'surge_down', 'retracement', 'bounce', 't_sell', 't_buy', 'limit_up', 'limit_up_broken', 'limit_up_low_seal', 'limit_up_exhaust', 'limit_down', 'limit_down_broken', 'limit_down_low_seal', 'limit_down_exhaust']) {
     templates[key] = form.elements[key].value.split('\n').filter(Boolean);
   }
   try {

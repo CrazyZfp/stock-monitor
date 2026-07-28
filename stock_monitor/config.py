@@ -30,6 +30,14 @@ DEFAULT_TEMPLATES = {
     "bounce": ["🟢 {name} 反弹 {bounce}（谷值 {valley_price}，当前 {price}）"],
     "t_sell": ["🔻 {name} 做T可买回：{t_price}→{price}（跌{t_threshold}%）"],
     "t_buy": ["🟢 {name} 做T可卖出：{t_price}→{price}（涨{t_threshold}%）"],
+    "limit_up": ["🔴 {name} 涨停 封单{sealed_lots}手 {sealed_amount}万元"],
+    "limit_up_broken": ["🟡 {name} 涨停开板 现{price}"],
+    "limit_up_low_seal": ["⚠️ {name} 涨停封单不足{seal_min_lots}手 现{sealed_lots}手"],
+    "limit_up_exhaust": ["⚠️ {name} 涨停封单将尽 预计{seal_eta_seconds}秒耗尽"],
+    "limit_down": ["🟢 {name} 跌停 封单{sealed_lots}手 {sealed_amount}万元"],
+    "limit_down_broken": ["🟡 {name} 跌停开板 现{price}"],
+    "limit_down_low_seal": ["⚠️ {name} 跌停封单不足{seal_min_lots}手 现{sealed_lots}手"],
+    "limit_down_exhaust": ["⚠️ {name} 跌停封单将尽 预计{seal_eta_seconds}秒耗尽"],
 }
 
 DEFAULT_STOCKS: list[dict] = []
@@ -69,6 +77,8 @@ class StockConfig:
     # 回撤 / 反弹
     retracement_threshold: Optional[float] = None
     bounce_threshold: Optional[float] = None
+    # 涨跌停封单告警：封单手数低于此值触发封单不足告警（空=不监控）
+    limit_seal_min_lots: Optional[int] = None
     # 做T
     t_threshold: Optional[float] = None
     t_events: list[dict] = field(default_factory=list)
@@ -135,6 +145,7 @@ class StockConfig:
             daily_change_down=list(dc_down) if dc_down is not None else [],
             retracement_threshold=d.get("retracement_threshold"),
             bounce_threshold=d.get("bounce_threshold"),
+            limit_seal_min_lots=d.get("limit_seal_min_lots"),
             t_threshold=d.get("t_threshold"),
             t_events=t_events,
             t_s_enabled=bool(d.get("t_s_enabled", True)),
@@ -187,6 +198,9 @@ class Config:
     at_mobiles: list[str] = field(default_factory=list)
     at_user_ids: list[str] = field(default_factory=list)
     poll_interval_seconds: int = 30
+    # 涨跌停封单将尽告警参数
+    limit_seal_exhaust_seconds: int = 30       # 预测封单将在多少秒内耗尽时告警
+    limit_seal_exhaust_samples: int = 3        # 计算平均消耗速度的轮询周期数
     disguise_templates: dict[str, list[str]] = field(default_factory=dict)
     stocks: list[StockConfig] = field(default_factory=list)
     funds: list[FundConfig] = field(default_factory=list)
@@ -197,6 +211,8 @@ class Config:
             "at_mobiles": list(self.at_mobiles),
             "at_user_ids": list(self.at_user_ids),
             "poll_interval_seconds": self.poll_interval_seconds,
+            "limit_seal_exhaust_seconds": self.limit_seal_exhaust_seconds,
+            "limit_seal_exhaust_samples": self.limit_seal_exhaust_samples,
             "disguise_templates": self.disguise_templates,
             "stocks": [s.to_dict() for s in self.stocks],
             "funds": [f.to_dict() for f in self.funds],
@@ -212,6 +228,8 @@ class Config:
             at_mobiles=list(d.get("at_mobiles", [])),
             at_user_ids=list(d.get("at_user_ids", [])),
             poll_interval_seconds=int(d.get("poll_interval_seconds", 30)),
+            limit_seal_exhaust_seconds=int(d.get("limit_seal_exhaust_seconds", 30)),
+            limit_seal_exhaust_samples=int(d.get("limit_seal_exhaust_samples", 3)),
             disguise_templates=merged_templates,
             stocks=[StockConfig.from_dict(x) for x in d.get("stocks", [])],
             funds=[FundConfig.from_dict(x) for x in d.get("funds", [])],

@@ -31,6 +31,7 @@ class StockIn(BaseModel):
     daily_change_down: list[float] = Field(default_factory=list)
     retracement_threshold: Optional[float] = None
     bounce_threshold: Optional[float] = None
+    limit_seal_min_lots: Optional[int] = None
     t_threshold: Optional[float] = None
     t_events: list[dict] = Field(default_factory=list)
     t_s_enabled: bool = True
@@ -129,6 +130,11 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         "t_type": "S",
         "t_price": "10.00",
         "t_threshold": "3.00%",
+        "limit_price": "11.00",
+        "sealed_lots": "100,000",
+        "sealed_amount": "11,000.00",
+        "seal_min_lots": "50,000",
+        "seal_eta_seconds": "28",
     }
     if stock is not None:
         base["name"] = stock.name
@@ -144,6 +150,11 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         base["t_type"] = ""
         base["t_price"] = ""
         base["t_threshold"] = ""
+        base["limit_price"] = ""
+        base["sealed_lots"] = ""
+        base["sealed_amount"] = ""
+        base["seal_min_lots"] = ""
+        base["seal_eta_seconds"] = ""
 
     if alert_type == "price_high":
         threshold = stock.price_high if stock is not None and stock.price_high is not None else 10.0
@@ -201,6 +212,52 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         base["t_threshold"] = f"{th:.2f}%"
         base["price"] = f"{10.0 * (1 + th / 100):.2f}"
         base["daily_change"] = "+2.00%"
+        base["threshold"] = ""
+    elif alert_type == "limit_up":
+        base["price"] = "11.00"
+        base["limit_price"] = "11.00"
+        base["daily_change"] = "+10.00%"
+        base["sealed_lots"] = "100,000"
+        base["sealed_amount"] = "11,000.00"
+        base["threshold"] = ""
+    elif alert_type == "limit_down":
+        base["price"] = "9.00"
+        base["limit_price"] = "9.00"
+        base["daily_change"] = "-10.00%"
+        base["sealed_lots"] = "100,000"
+        base["sealed_amount"] = "9,000.00"
+        base["threshold"] = ""
+    elif alert_type == "limit_up_broken":
+        base["price"] = "10.80"
+        base["limit_price"] = "11.00"
+        base["daily_change"] = "+8.00%"
+        base["threshold"] = ""
+    elif alert_type == "limit_down_broken":
+        base["price"] = "9.20"
+        base["limit_price"] = "9.00"
+        base["daily_change"] = "-8.00%"
+        base["threshold"] = ""
+    elif alert_type == "limit_up_low_seal":
+        base["seal_min_lots"] = f"{(stock.limit_seal_min_lots if stock is not None and stock.limit_seal_min_lots else 50000):,}"
+        base["sealed_lots"] = "30,000"
+        base["price"] = "11.00"
+        base["limit_price"] = "11.00"
+        base["threshold"] = ""
+    elif alert_type == "limit_down_low_seal":
+        base["seal_min_lots"] = f"{(stock.limit_seal_min_lots if stock is not None and stock.limit_seal_min_lots else 50000):,}"
+        base["sealed_lots"] = "30,000"
+        base["price"] = "9.00"
+        base["limit_price"] = "9.00"
+        base["threshold"] = ""
+    elif alert_type in ("limit_up_exhaust", "limit_down_exhaust"):
+        base["seal_eta_seconds"] = "28"
+        base["sealed_lots"] = "5,000"
+        if alert_type == "limit_up_exhaust":
+            base["price"] = "11.00"
+            base["limit_price"] = "11.00"
+        else:
+            base["price"] = "9.00"
+            base["limit_price"] = "9.00"
         base["threshold"] = ""
     return base
 
@@ -399,7 +456,7 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
 
     @router.post("/templates/preview")
     def preview_template(payload: TemplatePreviewIn):
-        VALID_TYPES = ("price_high", "price_low", "daily_up", "daily_down", "surge_up", "surge_down", "retracement", "bounce", "t_sell", "t_buy")
+        VALID_TYPES = ("price_high", "price_low", "daily_up", "daily_down", "surge_up", "surge_down", "retracement", "bounce", "t_sell", "t_buy", "limit_up", "limit_up_broken", "limit_up_low_seal", "limit_up_exhaust", "limit_down", "limit_down_broken", "limit_down_low_seal", "limit_down_exhaust")
         if payload.alert_type not in VALID_TYPES:
             raise HTTPException(400, f"未知 alert_type: {payload.alert_type}")
         cfg = manager.get_config()
