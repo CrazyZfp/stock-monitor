@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from ..config import Config, ConfigStore, FundConfig, StockConfig
+from ..config import Config, ConfigStore, CryptoConfig, FundConfig, StockConfig
 from ..manager import MonitorManager
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,25 @@ class FundIn(BaseModel):
 
 
 class FundPatch(BaseModel):
+    enabled: bool
+
+
+class CryptoIn(BaseModel):
+    code: str = Field(..., min_length=5, max_length=32)
+    name: str
+    nickname: str = ""
+    price_high: Optional[float] = None
+    price_low: Optional[float] = None
+    cooldown_minutes: int = 5
+    enabled: bool = True
+    t_threshold: Optional[float] = None
+    t_events: list[dict] = Field(default_factory=list)
+    t_s_enabled: bool = True
+    t_b_enabled: bool = True
+    disabled_alerts: list[str] = Field(default_factory=list)
+
+
+class CryptoPatch(BaseModel):
     enabled: bool
 
 
@@ -417,8 +436,83 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
             raise HTTPException(404, f"基金 {code} 不存在")
         return {"ok": True}
 
-    # ----- 做T事件 -----
+    # ----- 合约 -----
+    @router.get("/cryptos/search")
+    def search_cryptos(q: str = Query(..., min_length=1)):
+        import requests as _requests
+        results = []
+        for prefix, host in [("fapi", "https://fapi.binance.com"), ("dapi", "https://dapi.binance.com")]:
+            try:
+                resp = _requests.get(f"{host}/{prefix}/v1/exchangeInfo", timeout=10)
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                q_upper = q.upper()
+                for sym in data.get("symbols", []):
+                    if prefix == "dapi" and sym.get("contractType") != "PERPETUAL":
+                        continue
+                    symbol = sym.get("symbol", "")
+                    if q_upper in symbol.upper():
+                        label = "U本位" if prefix == "fapi" else "币本位"
+                        results.append({
+                            "code": f"{prefix}:{symbol}",
+                            "symbol": symbol,
+                            "name": symbol,
+                            "market": label,
+                            "price_precision": sym.get("pricePrecision", 2),
+                        })
+            except Exception as e:
+                logger.warning(f"合约搜索 {prefix} 失败: {e}")
+        # 限 50 条
+        return results[:50]
+
+    @router.get("/cryptos")
+    def list_cryptos():
+        quotes = manager.get_crypto_quotes()
+        triggered = manager.monitor.t_events_triggered if manager.monitor else {}
+        result = []
+        for c in manager.get_config().cryptos:
+            d = c.to_dict()
+            for ev in d.get("t_events", []):
+                ev["triggered"] = c.code in triggered and ev["id"] in triggered[c.code]
+            d["quote"] = quotes.get(c.code, {"price": None, "change_percent": None, "as_of": None})
+            result.append(d)
+        return result
+
+    @router.post("/cryptos", status_code=201)
+    def create_crypto(crypto: CryptoIn):
+        cc = CryptoConfig(**crypto.model_dump())
+        if manager.get_config().find_crypto(cc.code) is not None:
+            raise HTTPException(409, f"合约代码 {cc.code} 已存在")
+        manager.upsert_crypto(cc)
+        return cc.to_dict()
+
+    @router.put("/cryptos/{code}")
+    def update_crypto(code: str, crypto: CryptoIn):
+        if code != crypto.code:
+            raise HTTPException(400, "URL 中的 code 与 body 中的 code 不一致")
+        cc = CryptoConfig(**crypto.model_dump())
+        existing = manager.get_config().find_crypto(code)
+        if existing is not None and existing.t_events:
+            cc.t_events = list(existing.t_events)
+        manager.upsert_crypto(cc)
+        return cc.to_dict()
+
+    @router.delete("/cryptos/{code}")
+    def delete_crypto(code: str):
+        if not manager.delete_crypto(code):
+            raise HTTPException(404, f"合约 {code} 不存在")
+        return {"ok": True}
+
+    @router.patch("/cryptos/{code}/enabled")
+    def patch_crypto_enabled(code: str, patch: CryptoPatch):
+        if not manager.patch_crypto_enabled(code, patch.enabled):
+            raise HTTPException(404, f"合约 {code} 不存在")
+        return {"ok": True}
+
+    # ----- 做T事件（股票 + 合约共用） -----
     @router.post("/stocks/{code}/t-events", status_code=201)
+    @router.post("/cryptos/{code}/t-events", status_code=201)
     def add_t_event(code: str, payload: TEventIn):
         if payload.type not in ("S", "B"):
             raise HTTPException(400, "type 必须为 S 或 B")
@@ -426,6 +520,7 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
         return event
 
     @router.put("/stocks/{code}/t-events/{event_id}")
+    @router.put("/cryptos/{code}/t-events/{event_id}")
     def update_t_event(code: str, event_id: str, payload: TEventIn):
         event = manager.update_t_event(code, event_id, price=payload.price, target_price=payload.target_price)
         if event is None:
@@ -433,12 +528,14 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
         return event
 
     @router.delete("/stocks/{code}/t-events/{event_id}")
+    @router.delete("/cryptos/{code}/t-events/{event_id}")
     def delete_t_event(code: str, event_id: str):
         if not manager.remove_t_event(code, event_id):
             raise HTTPException(404, f"事件 {event_id} 不存在")
         return {"ok": True}
 
     @router.post("/stocks/{code}/t-events/{event_id}/reset")
+    @router.post("/cryptos/{code}/t-events/{event_id}/reset")
     def reset_t_event(code: str, event_id: str):
         if not manager.reset_t_event(code, event_id):
             raise HTTPException(404, f"事件 {event_id} 不存在")
@@ -562,12 +659,12 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
 
     # ----- 导入 / 导出 -----
     @router.get("/export")
-    def export_config(scope: str = Query("stocks,funds,templates,webhook,other")):
+    def export_config(scope: str = Query("stocks,funds,cryptos,templates,webhook,other")):
         scopes = [s.strip() for s in scope.split(",") if s.strip()]
         return manager.export_config(scopes)
 
     @router.post("/import")
-    async def import_config(file: UploadFile, scope: str = Query("stocks,funds,templates,webhook,other")):
+    async def import_config(file: UploadFile, scope: str = Query("stocks,funds,cryptos,templates,webhook,other")):
         import json
         try:
             raw = await file.read()

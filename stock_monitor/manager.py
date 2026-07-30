@@ -19,7 +19,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .config import Config, ConfigStore, FundConfig, StockConfig
+from .config import Config, ConfigStore, CryptoConfig, FundConfig, StockConfig
 from .core import StockMonitor
 
 logger = logging.getLogger(__name__)
@@ -144,6 +144,40 @@ class MonitorManager:
         self._apply_fund_change(code)
         return True
 
+    # ===== 合约 CRUD =====
+
+    def upsert_crypto(self, crypto: CryptoConfig):
+        with self._lock:
+            def mut(cfg: Config):
+                existing = cfg.find_crypto(crypto.code)
+                if existing is not None:
+                    cfg.cryptos.remove(existing)
+                cfg.cryptos.append(crypto)
+            self.store.update(mut)
+        self._apply_crypto_change(crypto.code)
+
+    def delete_crypto(self, code: str) -> bool:
+        with self._lock:
+            cfg = self.store.get()
+            if cfg.find_crypto(code) is None:
+                return False
+            def mut(c: Config):
+                c.cryptos = [c for c in c.cryptos if c.code != code]
+            self.store.update(mut)
+        self._remove_crypto_runtime(code)
+        return True
+
+    def patch_crypto_enabled(self, code: str, enabled: bool) -> bool:
+        with self._lock:
+            cfg = self.store.get()
+            target = cfg.find_crypto(code)
+            if target is None:
+                return False
+            target.enabled = enabled
+            self.store.save(cfg)
+        self._apply_crypto_change(code)
+        return True
+
     def update_poll_interval(self, seconds: int):
         if seconds < 5:
             seconds = 5
@@ -198,6 +232,8 @@ class MonitorManager:
             result["stocks"] = [s.to_dict() for s in cfg.stocks]
         if "funds" in scope:
             result["funds"] = [f.to_dict() for f in cfg.funds]
+        if "cryptos" in scope:
+            result["cryptos"] = [c.to_dict() for c in cfg.cryptos]
         if "templates" in scope:
             result["disguise_templates"] = cfg.disguise_templates
         if "webhook" in scope:
@@ -216,6 +252,8 @@ class MonitorManager:
                 cfg.stocks = [StockConfig.from_dict(s) for s in data["stocks"]]
             if "funds" in scope and "funds" in data:
                 cfg.funds = [FundConfig.from_dict(f) for f in data["funds"]]
+            if "cryptos" in scope and "cryptos" in data:
+                cfg.cryptos = [CryptoConfig.from_dict(c) for c in data["cryptos"]]
             if "templates" in scope and "disguise_templates" in data:
                 cfg.disguise_templates = data["disguise_templates"]
             if "webhook" in scope:
@@ -242,6 +280,7 @@ class MonitorManager:
             "limit_seal_exhaust_samples": self.store.get().limit_seal_exhaust_samples,
             "stocks": [s.to_dict() for s in self.store.get().stocks],
             "funds": [f.to_dict() for f in self.store.get().funds],
+            "cryptos": [c.to_dict() for c in self.store.get().cryptos],
             "config_path": str(self.store.path),
             "price_latency": self.monitor._price_latency if self.monitor else None,
         }
@@ -250,6 +289,10 @@ class MonitorManager:
             for sd in result["stocks"]:
                 for ev in sd.get("t_events", []):
                     code = sd.get("code")
+                    ev["triggered"] = code in triggered and ev["id"] in triggered[code]
+            for cd in result["cryptos"]:
+                for ev in cd.get("t_events", []):
+                    code = cd.get("code")
                     ev["triggered"] = code in triggered and ev["id"] in triggered[code]
         return result
 
@@ -370,6 +413,35 @@ class MonitorManager:
                 }
             return result
 
+    def get_crypto_quotes(self) -> dict:
+        """返回每个合约最新价格 + 涨跌幅（无缓存时实时获取）"""
+        empty = {"price": None, "change_percent": None, "as_of": None}
+        cfg = self.store.get()
+        with self._lock:
+            if self.monitor is None:
+                return {c.code: dict(empty) for c in cfg.cryptos}
+            stale_codes = [c.code for c in cfg.cryptos if c.enabled and not self.monitor.price_history.get(c.code)]
+            if stale_codes:
+                self.monitor.fetch_crypto_prices(stale_codes)
+            result = {}
+            for crypto in cfg.cryptos:
+                history = self.monitor.price_history.get(crypto.code, [])
+                if not history:
+                    result[crypto.code] = dict(empty)
+                    continue
+                latest = history[-1]
+                prev_close = self.monitor.yesterday_close.get(crypto.code, 0.0)
+                change = None
+                if prev_close > 0:
+                    change = round((latest["price"] - prev_close) / prev_close * 100, 2)
+                result[crypto.code] = {
+                    "price": latest["price"],
+                    "change_percent": change,
+                    "as_of": int(latest["time"].timestamp()),
+                    "price_precision": self.monitor.stocks.get(crypto.code, {}).get("price_precision", 2),
+                }
+            return result
+
     # ===== 做T事件 =====
 
     def add_t_event(self, code: str, event_type: str, price: float, target_price: Optional[float] = None) -> dict:
@@ -383,11 +455,15 @@ class MonitorManager:
             "created_at": int(time.time()),
         }
         with self._lock:
-            # 写 config
+            # 写 config（股票或合约）
             def mut(cfg: Config):
                 stock = cfg.find_stock(code)
                 if stock is not None:
                     stock.t_events.append(event)
+                    return
+                crypto = cfg.find_crypto(code)
+                if crypto is not None:
+                    crypto.t_events.append(event)
             self.store.update(mut)
             # 同步 monitor 运行时
             if self.monitor is not None and code in self.monitor.t_events:
@@ -401,10 +477,10 @@ class MonitorManager:
 
             def mut(cfg: Config):
                 nonlocal updated_event
-                stock = cfg.find_stock(code)
-                if stock is None:
+                target = cfg.find_stock(code) or cfg.find_crypto(code)
+                if target is None:
                     return
-                for ev in stock.t_events:
+                for ev in target.t_events:
                     if ev.get("id") == event_id:
                         ev["price"] = price
                         ev["target_price"] = target_price
@@ -434,12 +510,12 @@ class MonitorManager:
         """删除做T事件"""
         with self._lock:
             cfg = self.store.get()
-            stock = cfg.find_stock(code)
-            if stock is None:
+            target = cfg.find_stock(code) or cfg.find_crypto(code)
+            if target is None:
                 return False
-            old_len = len(stock.t_events)
-            stock.t_events = [e for e in stock.t_events if e.get("id") != event_id]
-            if len(stock.t_events) == old_len:
+            old_len = len(target.t_events)
+            target.t_events = [e for e in target.t_events if e.get("id") != event_id]
+            if len(target.t_events) == old_len:
                 return False
             self.store.save(cfg)
             # 同步 monitor 运行时
@@ -459,9 +535,9 @@ class MonitorManager:
             if code in self.monitor.t_events:
                 if not any(ev.get("id") == event_id for ev in self.monitor.t_events[code]):
                     cfg = self.store.get()
-                    stock = cfg.find_stock(code)
-                    if stock:
-                        for ev in stock.t_events:
+                    target = cfg.find_stock(code) or cfg.find_crypto(code)
+                    if target:
+                        for ev in target.t_events:
                             if ev.get("id") == event_id:
                                 self.monitor.t_events[code].append(dict(ev))
                                 return True
@@ -481,11 +557,18 @@ class MonitorManager:
             if not f.enabled:
                 continue
             m.add_fund(f.code, self._fund_to_dict(f))
+        for c in cfg.cryptos:
+            if not c.enabled:
+                continue
+            m.add_crypto(c.code, self._crypto_to_dict(c))
         # 覆盖默认模板
         if cfg.disguise_templates:
             m.disguise_templates = {
                 k: list(v) for k, v in cfg.disguise_templates.items()
             }
+        # 拉取合约精度缓存
+        if cfg.cryptos:
+            m.fetch_crypto_exchange_info()
         return m
 
     def _stock_to_dict(self, s: StockConfig) -> dict:
@@ -521,6 +604,49 @@ class MonitorManager:
             "bounce_threshold": f.bounce_threshold,
             "disabled_alerts": list(f.disabled_alerts),
         }
+
+    def _crypto_to_dict(self, c: CryptoConfig) -> dict:
+        return {
+            "name": c.name,
+            "nickname": c.nickname,
+            "price_high": c.price_high,
+            "price_low": c.price_low,
+            "cooldown_minutes": c.cooldown_minutes,
+            "t_threshold": c.t_threshold,
+            "t_events": list(c.t_events),
+            "t_s_enabled": c.t_s_enabled,
+            "t_b_enabled": c.t_b_enabled,
+            "disabled_alerts": list(c.disabled_alerts),
+            "price_precision": self.monitor._crypto_precision.get(c.code, 2) if self.monitor else 2,
+        }
+
+    def _apply_crypto_change(self, code: str):
+        with self._lock:
+            if self.monitor is None:
+                return
+            cfg = self.store.get()
+            target = cfg.find_crypto(code)
+            self._remove_crypto_runtime(code)
+            if target is not None and target.enabled:
+                self.monitor.add_crypto(code, self._crypto_to_dict(target))
+
+    def _remove_crypto_runtime(self, code: str):
+        with self._lock:
+            if self.monitor is None:
+                return
+            self.monitor.stocks.pop(code, None)
+            self.monitor.price_history.pop(code, None)
+            self.monitor.notification_cooldown.pop(code, None)
+            self.monitor.price_alert_status.pop(code, None)
+            self.monitor.yesterday_close.pop(code, None)
+            self.monitor.price_high_alerted_abs.pop(code, None)
+            self.monitor.price_low_alerted_abs.pop(code, None)
+            self.monitor.price_high_alerted_daily.pop(code, None)
+            self.monitor.price_low_alerted_daily.pop(code, None)
+            self.monitor.peak_since_high_alert.pop(code, None)
+            self.monitor.valley_since_low_alert.pop(code, None)
+            self.monitor.t_events.pop(code, None)
+            self.monitor._crypto_codes.discard(code)
 
     def _apply_stock_change(self, code: str):
         """单只股票 add/update 后：找到并 rebuild 该只"""
@@ -600,33 +726,49 @@ class MonitorManager:
                 }
             enabled_stock_codes = {s.code for s in cfg.stocks if s.enabled}
             for code in list(self.monitor.stocks.keys()):
-                if code not in enabled_stock_codes and cfg.find_fund(code) is None:
+                if code not in enabled_stock_codes and cfg.find_fund(code) is None and cfg.find_crypto(code) is None:
                     self._remove_stock_runtime(code)
             for s in cfg.stocks:
                 if s.enabled and s.code not in self.monitor.stocks:
                     self.monitor.add_stock(s.code, self._stock_to_dict(s))
             enabled_fund_codes = {f.code for f in cfg.funds if f.enabled}
             for code in list(self.monitor.stocks.keys()):
-                if code not in enabled_fund_codes and cfg.find_stock(code) is None:
+                if code not in enabled_fund_codes and cfg.find_stock(code) is None and cfg.find_crypto(code) is None:
                     self._remove_fund_runtime(code)
             for f in cfg.funds:
                 if f.enabled and f.code not in self.monitor.stocks:
                     self.monitor.add_fund(f.code, self._fund_to_dict(f))
+            enabled_crypto_codes = {c.code for c in cfg.cryptos if c.enabled}
+            for code in list(self.monitor._crypto_codes):
+                if code not in enabled_crypto_codes:
+                    self._remove_crypto_runtime(code)
+            for c in cfg.cryptos:
+                if c.enabled and c.code not in self.monitor.stocks:
+                    self.monitor.add_crypto(c.code, self._crypto_to_dict(c))
 
     def _loop(self):
-        """后台循环：每轮检查所有股票，同一轮次多条通知合为一条发送，避免钉钉限流"""
+        """后台循环：每轮检查所有股票，同一轮次多条通知合为一条发送，避免钉钉限流
+
+        合约品种 24/7 交易，始终按 interval_seconds 轮询，不受 A 股交易时段限制。
+        """
         logger.info("监控循环启动")
         while self._running:
             try:
+                has_crypto = self.monitor is not None and bool(self.monitor._crypto_codes)
                 sleep_seconds = StockMonitor._seconds_until_next_check(self.interval_seconds)
+                # 有合约品种时，休眠不超过一个轮询周期
+                if has_crypto:
+                    sleep_seconds = self.interval_seconds
+                is_trading_window = sleep_seconds == self.interval_seconds
 
-                if sleep_seconds == self.interval_seconds and self.monitor is not None and self.monitor.dingding_webhook:
+                if self.monitor is not None and self.monitor.dingding_webhook and (is_trading_window or has_crypto):
                     cfg = self.store.get()
 
-                    # 每日状态重置（开盘后首次检查时执行）
+                    # 每日状态重置（首次检查时执行）
                     today = datetime.now().date()
                     if self.monitor._reset_date is None or today != self.monitor._reset_date:
                         t_events_map = {s.code: list(s.t_events) for s in cfg.stocks if s.enabled}
+                        t_events_map.update({c.code: list(c.t_events) for c in cfg.cryptos if c.enabled})
                         self.monitor.daily_reset(t_events_map)
                         self.monitor._reset_date = today
                         logger.info(f"每日监控状态已重置 ({today})")
@@ -634,28 +776,43 @@ class MonitorManager:
                     self._sync_enabled(cfg)
                     self.monitor._batch_mode = True
                     self.monitor._alert_buffer.clear()
-                    codes = [s.code for s in cfg.stocks if s.enabled]
-                    if codes:
-                        prices = self.monitor.fetch_batch_prices(codes)
-                        for code in codes:
-                            if code not in prices:
-                                continue
-                            try:
-                                self.monitor.check_stock_alerts(code, override_price=prices[code])
-                            except Exception as e:
-                                logger.error(f"检查 {code} 时异常: {e}")
-                                self.stats["last_error"] = str(e)
-                    fund_codes = [f.code for f in cfg.funds if f.enabled]
-                    if fund_codes:
-                        fund_prices = self.monitor.fetch_fund_prices(fund_codes)
-                        for code in fund_codes:
-                            if code not in fund_prices:
-                                continue
-                            try:
-                                self.monitor.check_stock_alerts(code, override_price=fund_prices[code])
-                            except Exception as e:
-                                logger.error(f"检查基金 {code} 时异常: {e}")
-                                self.stats["last_error"] = str(e)
+                    # A 股 / 基金（仅交易时段）
+                    if is_trading_window:
+                        codes = [s.code for s in cfg.stocks if s.enabled]
+                        if codes:
+                            prices = self.monitor.fetch_batch_prices(codes)
+                            for code in codes:
+                                if code not in prices:
+                                    continue
+                                try:
+                                    self.monitor.check_stock_alerts(code, override_price=prices[code])
+                                except Exception as e:
+                                    logger.error(f"检查 {code} 时异常: {e}")
+                                    self.stats["last_error"] = str(e)
+                        fund_codes = [f.code for f in cfg.funds if f.enabled]
+                        if fund_codes:
+                            fund_prices = self.monitor.fetch_fund_prices(fund_codes)
+                            for code in fund_codes:
+                                if code not in fund_prices:
+                                    continue
+                                try:
+                                    self.monitor.check_stock_alerts(code, override_price=fund_prices[code])
+                                except Exception as e:
+                                    logger.error(f"检查基金 {code} 时异常: {e}")
+                                    self.stats["last_error"] = str(e)
+                    # 合约（始终轮询）
+                    if has_crypto:
+                        crypto_codes = [c.code for c in cfg.cryptos if c.enabled]
+                        if crypto_codes:
+                            crypto_prices = self.monitor.fetch_crypto_prices(crypto_codes)
+                            for code in crypto_codes:
+                                if code not in crypto_prices:
+                                    continue
+                                try:
+                                    self.monitor.check_stock_alerts(code, override_price=crypto_prices[code])
+                                except Exception as e:
+                                    logger.error(f"检查合约 {code} 时异常: {e}")
+                                    self.stats["last_error"] = str(e)
                     self.monitor._batch_mode = False
                     n_alerts = len(self.monitor._alert_buffer)
                     self.monitor.flush_alerts()
@@ -675,11 +832,12 @@ class MonitorManager:
         logger.info("监控循环退出")
 
     def _sync_enabled(self, cfg: Config):
-        """与 cfg 对齐 stocks / funds 字典（启用/禁用）"""
+        """与 cfg 对齐 stocks / funds / cryptos 字典（启用/禁用）"""
         if self.monitor is None:
             return
         enabled_codes = {s.code for s in cfg.stocks if s.enabled}
         enabled_codes |= {f.code for f in cfg.funds if f.enabled}
+        enabled_codes |= {c.code for c in cfg.cryptos if c.enabled}
         for code in list(self.monitor.stocks.keys()):
             if code not in enabled_codes:
                 self._remove_stock_runtime(code)
@@ -689,3 +847,6 @@ class MonitorManager:
         for f in cfg.funds:
             if f.enabled and f.code not in self.monitor.stocks:
                 self.monitor.add_fund(f.code, self._fund_to_dict(f))
+        for c in cfg.cryptos:
+            if c.enabled and c.code not in self.monitor.stocks:
+                self.monitor.add_crypto(c.code, self._crypto_to_dict(c))

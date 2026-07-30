@@ -31,6 +31,11 @@ function fmtPrice(p) {
   return Number(p).toFixed(2);
 }
 
+function fmtPriceP(p, precision) {
+  if (p == null) return '—';
+  return Number(p).toFixed(precision != null ? precision : 2);
+}
+
 function fmtChange(c) {
   if (c == null) return '—';
   const sign = c > 0 ? '+' : '';
@@ -88,6 +93,7 @@ $$('.tab').forEach(btn => btn.addEventListener('click', () => {
   $('#tab-' + btn.dataset.tab).classList.add('active');
   if (btn.dataset.tab === 'status') loadStatus();
   if (btn.dataset.tab === 'funds') loadFunds();
+  if (btn.dataset.tab === 'cryptos') loadCryptos();
 }));
 
 // ========== 股票 ==========
@@ -207,6 +213,10 @@ async function startQuoteRefresh() {
     try {
       fundsCache = await api('/api/funds');
       renderFunds();
+    } catch {}
+    try {
+      cryptosCache = await api('/api/cryptos');
+      renderCryptos();
     } catch {}
     updateLatency();
   }, interval);
@@ -345,6 +355,264 @@ $('#funds-table').addEventListener('change', async (e) => {
       toast(enabled ? '已启用' : '已停用');
     } catch (e) { toast('操作失败: ' + e.message, 'error'); loadFunds(); }
   }
+});
+
+// ========== 合约 ==========
+let cryptosCache = [];
+
+async function loadCryptos() {
+  cryptosCache = await api('/api/cryptos');
+  renderCryptos();
+}
+
+function renderCryptos() {
+  const tbody = $('#cryptos-table tbody');
+  tbody.innerHTML = '';
+  for (const c of cryptosCache) {
+    const q = c.quote || {};
+    const prec = q.price_precision != null ? q.price_precision : 2;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><code>${escapeHtml(c.code)}</code></td>
+      <td>${escapeHtml(c.name)}</td>
+      <td>${c.nickname ? escapeHtml(c.nickname) : '<span class="muted">—</span>'}</td>
+      <td class="${priceCellClass(q.change_percent)}">
+        <div class="quote-price">${fmtPriceP(q.price, prec)}</div>
+        <div class="quote-change">${fmtChange(q.change_percent)}</div>
+      </td>
+      <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
+      <td><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''} data-code="${escapeHtml(c.code)}" class="toggle-crypto"><span class="slider"></span></label></td>
+      <td>
+        <button class="btn" data-cedit="${escapeHtml(c.code)}">编辑</button>
+        <button class="btn btn-danger" data-cdel="${escapeHtml(c.code)}">删除</button>
+      </td>
+      <td class="t-events-cell" data-tcode="${escapeHtml(c.code)}">
+        <div class="t-btns">
+          <button class="btn btn-sm btn-t-s ${c.t_s_enabled === false ? 'btn-t-disabled' : ''}" data-tadd="${escapeHtml(c.code)}" data-ttype="S" data-tsource="crypto" ${c.t_s_enabled === false ? 'disabled' : ''}>S</button>
+          <button class="btn btn-sm btn-t-b ${c.t_b_enabled === false ? 'btn-t-disabled' : ''}" data-tadd="${escapeHtml(c.code)}" data-ttype="B" data-tsource="crypto" ${c.t_b_enabled === false ? 'disabled' : ''}>B</button>
+        </div>
+        <div class="t-list" data-tlist="${escapeHtml(c.code)}"></div>
+      </td>`;
+    tbody.appendChild(tr);
+    const tlist = tr.querySelector(`[data-tlist="${CSS.escape(c.code)}"]`);
+    if (tlist) renderTList(tlist, c.t_events || []);
+  }
+  $('#cryptos-empty').hidden = cryptosCache.length > 0;
+  $('#cryptos-table').hidden = cryptosCache.length === 0;
+}
+
+$('#cryptos-table').addEventListener('click', async (e) => {
+  // T 事件 S/B 按钮
+  const tBtn = e.target.closest('[data-tadd]');
+  if (tBtn) {
+    const code = tBtn.dataset.tadd;
+    const type = tBtn.dataset.ttype;
+    const c = cryptosCache.find(x => x.code === code);
+    const defaultPrice = c?.quote?.price;
+    const prec = c?.quote?.price_precision != null ? c.quote.price_precision : 2;
+    currentTEvent = { action: 'add', code, type, name: c?.name, source: 'crypto' };
+    $('#t-event-dialog-title').textContent = `新增${type === 'S' ? '先卖后买(S)' : '先买后卖(B)'} (${c?.name})`;
+    $('#t-event-price').value = defaultPrice ? fmtPriceP(defaultPrice, prec) : '';
+    $('#t-event-target-price').value = '';
+    $('#t-event-dialog').showModal();
+    return;
+  }
+  // T 事件删除
+  const tDel = e.target.closest('[data-tdel]');
+  if (tDel) {
+    const eventId = tDel.dataset.tdel;
+    const code = tDel.dataset.tcode;
+    if (!confirm('确认删除此做T事件?')) return;
+    try {
+      await api(`/api/cryptos/${code}/t-events/${eventId}`, { method: 'DELETE' });
+      toast('已删除'); loadCryptos();
+    } catch (e) { toast('删除失败: ' + e.message, 'error'); }
+    return;
+  }
+  // T 事件重置
+  const tReset = e.target.closest('.t-trigger.triggered');
+  if (tReset) {
+    const eventId = tReset.dataset.treset;
+    const code = tReset.dataset.tcode;
+    try {
+      await api(`/api/cryptos/${code}/t-events/${eventId}/reset`, { method: 'POST' });
+      toast('T 事件已重置，今日可再次触发');
+      loadCryptos();
+    } catch (err) { toast('重置失败: ' + err.message, 'error'); }
+    return;
+  }
+  // T 事件编辑
+  const tEdit = e.target.closest('[data-tedit]');
+  if (tEdit) {
+    const eventId = tEdit.dataset.tedit;
+    const code = tEdit.dataset.tcode;
+    const c = cryptosCache.find(x => x.code === code);
+    const ev = (c?.t_events || []).find(x => x.id === eventId);
+    if (!ev) return;
+    const prec = c?.quote?.price_precision != null ? c.quote.price_precision : 2;
+    currentTEvent = { action: 'edit', code, type: ev.type, eventId, name: c?.name, source: 'crypto' };
+    $('#t-event-dialog-title').textContent = `编辑${ev.type === 'S' ? '先卖后买(S)' : '先买后卖(B)'} (${c?.name})`;
+    $('#t-event-price').value = fmtPriceP(ev.price, prec);
+    $('#t-event-target-price').value = ev.target_price != null ? fmtPriceP(ev.target_price, prec) : '';
+    $('#t-event-dialog').showModal();
+    return;
+  }
+  // 编辑 / 删除合约
+  const editCode = e.target.dataset.cedit;
+  if (editCode) openCryptoDialog(cryptosCache.find(c => c.code === editCode));
+  const delCode = e.target.dataset.cdel;
+  if (delCode) {
+    if (confirm(`确认删除 ${delCode}?`)) {
+      try { await api(`/api/cryptos/${delCode}`, { method: 'DELETE' }); toast('已删除'); loadCryptos(); }
+      catch (e) { toast('删除失败: ' + e.message, 'error'); }
+    }
+  }
+});
+
+$('#cryptos-table').addEventListener('change', async (e) => {
+  if (e.target.classList.contains('toggle-crypto')) {
+    const code = e.target.dataset.code;
+    const enabled = e.target.checked;
+    try {
+      await api(`/api/cryptos/${code}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) });
+      toast(enabled ? '已启用' : '已停用');
+    } catch (e) { toast('操作失败: ' + e.message, 'error'); loadCryptos(); }
+  }
+});
+
+const cryptoDialog = $('#crypto-dialog');
+$('#btn-add-crypto').addEventListener('click', () => openCryptoDialog(null));
+$('#btn-crypto-cancel').addEventListener('click', () => { resetCryptoSearch(); cryptoDialog.close(); });
+
+function openCryptoDialog(crypto) {
+  const form = $('#crypto-form');
+  form.reset();
+  resetCryptoSearch();
+  $('#crypto-dialog-title').textContent = crypto ? '编辑合约' : '新增合约';
+  if (crypto) {
+    for (const [k, v] of Object.entries(crypto)) {
+      if (k === 'quote') continue;
+      if (form.elements[k]) {
+        if (k === 'code') {
+          form.elements[k].value = v ?? '';
+          $('#crypto-code-display').value = v ?? '';
+          $('#crypto-search-input').value = (crypto.name || '') + ' (' + (v ?? '') + ')';
+        } else {
+          form.elements[k].value = v ?? '';
+        }
+      }
+    }
+    $('#crypto-search-input').readOnly = true;
+    const disabledSet = new Set(crypto.disabled_alerts || []);
+    $$('.alert-type-toggle', form).forEach(cb => {
+      cb.checked = !disabledSet.has(cb.dataset.type);
+    });
+    updateCryptoInputStates();
+  } else {
+    $('#crypto-search-input').readOnly = false;
+  }
+  cryptoDialog.showModal();
+}
+
+function updateCryptoInputStates() {
+  const form = $('#crypto-form');
+  $$('.alert-type-toggle', form).forEach(cb => {
+    const inputName = cb.dataset.input;
+    if (!inputName) return;
+    const group = $$(`.alert-type-toggle[data-input="${inputName}"]`, form);
+    const allDisabled = group.length > 0 && group.every(c => !c.checked);
+    const input = form.elements[inputName];
+    if (input) input.disabled = allDisabled;
+  });
+}
+
+document.addEventListener('change', (e) => {
+  if (e.target.matches('#crypto-form .alert-type-toggle')) updateCryptoInputStates();
+});
+
+function resetCryptoSearch() {
+  $('#crypto-search-input').value = '';
+  $('#crypto-code-display').value = '';
+  $('#crypto-code-hidden').value = '';
+  $('#crypto-search-dropdown').classList.remove('active');
+  $('#crypto-search-dropdown').innerHTML = '';
+  $('#crypto-search-input').readOnly = false;
+}
+
+cryptoDialog.addEventListener('close', resetCryptoSearch);
+
+// 合约搜索自动补全
+let cryptoSearchTimer = null;
+$('#crypto-search-input').addEventListener('input', () => {
+  clearTimeout(cryptoSearchTimer);
+  const q = $('#crypto-search-input').value.trim();
+  if (!q) { $('#crypto-search-dropdown').classList.remove('active'); return; }
+  cryptoSearchTimer = setTimeout(async () => {
+    try {
+      const items = await api(`/api/cryptos/search?q=${encodeURIComponent(q)}`);
+      const dd = $('#crypto-search-dropdown');
+      if (!items || items.length === 0) {
+        dd.innerHTML = '<div class="stock-search-empty">无匹配结果</div>';
+        dd.classList.add('active');
+        return;
+      }
+      dd.innerHTML = items.map(it => `
+        <div class="stock-search-item" data-code="${escapeHtml(it.code)}" data-name="${escapeHtml(it.name)}" data-precision="${it.price_precision ?? 2}">
+          <span class="sname">${escapeHtml(it.name)}</span>
+          <span class="scode">${escapeHtml(it.market)} ${escapeHtml(it.code)}</span>
+        </div>`).join('');
+      dd.classList.add('active');
+    } catch (e) { /* ignore */ }
+  }, 400);
+});
+
+$('#crypto-search-dropdown').addEventListener('click', (e) => {
+  const item = e.target.closest('.stock-search-item');
+  if (!item) return;
+  const code = item.dataset.code;
+  const name = item.dataset.name;
+  $('#crypto-code-hidden').value = code;
+  $('#crypto-code-display').value = code;
+  $('#crypto-name-input').value = name;
+  $('#crypto-search-input').value = name + ' (' + code + ')';
+  $('#crypto-search-dropdown').classList.remove('active');
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#crypto-dialog .stock-search-wrap')) {
+    $('#crypto-search-dropdown').classList.remove('active');
+  }
+});
+
+$('#crypto-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const code = $('#crypto-code-hidden').value.trim();
+  if (!code) { toast('请先搜索并选择合约', 'error'); return; }
+  const crypto = {
+    code,
+    name: form.elements.name.value.trim(),
+    nickname: form.elements.nickname.value.trim(),
+    price_high: numOrNull(form.elements.price_high.value),
+    price_low: numOrNull(form.elements.price_low.value),
+    cooldown_minutes: Number(form.elements.cooldown_minutes.value),
+    enabled: true,
+    t_threshold: numOrNull(form.elements.t_threshold.value),
+    t_s_enabled: form.elements.t_s_enabled.checked,
+    t_b_enabled: form.elements.t_b_enabled.checked,
+    disabled_alerts: $$('.alert-type-toggle', form).filter(cb => !cb.checked).map(cb => cb.dataset.type),
+  };
+  const isEdit = cryptosCache.some(c => c.code === code);
+  try {
+    if (isEdit) {
+      await api(`/api/cryptos/${code}`, { method: 'PUT', body: JSON.stringify(crypto) });
+    } else {
+      await api('/api/cryptos', { method: 'POST', body: JSON.stringify(crypto) });
+    }
+    toast(isEdit ? '已更新' : '已新增');
+    cryptoDialog.close();
+    loadCryptos();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 });
 
 const fundDialog = $('#fund-dialog');
@@ -490,20 +758,21 @@ $('#t-event-form').addEventListener('submit', async (e) => {
     if (!isNaN(tp) && tp > 0) targetPrice = tp;
   }
   try {
+    const base = currentTEvent.source === 'crypto' ? 'cryptos' : 'stocks';
     if (currentTEvent.action === 'add') {
-      await api(`/api/stocks/${currentTEvent.code}/t-events`, {
+      await api(`/api/${base}/${currentTEvent.code}/t-events`, {
         method: 'POST',
         body: JSON.stringify({ type: currentTEvent.type, price, target_price: targetPrice })
       });
       toast(`已添加 ${currentTEvent.type} @ ${fmtPrice(price)}`);
     } else {
-      await api(`/api/stocks/${currentTEvent.code}/t-events/${currentTEvent.eventId}`, {
+      await api(`/api/${base}/${currentTEvent.code}/t-events/${currentTEvent.eventId}`, {
         method: 'PUT',
         body: JSON.stringify({ type: currentTEvent.type, price, target_price: targetPrice })
       });
       toast('已更新');
     }
-    loadStocks();
+    if (currentTEvent.source === 'crypto') loadCryptos(); else loadStocks();
   } catch (e) { toast('失败: ' + e.message, 'error'); }
   $('#t-event-dialog').close();
   currentTEvent = null;
@@ -737,6 +1006,7 @@ $('#import-form').addEventListener('submit', async (e) => {
     importFileData = null;
     loadStocks();
     loadFunds();
+    loadCryptos();
     loadTemplates();
     loadWebhook();
     loadStatus();
@@ -841,6 +1111,7 @@ async function loadStatus() {
     ['告警次数', s.alert_count],
     ['监控股票数', s.stocks.length],
     ['监控基金数', s.funds ? s.funds.length : 0],
+    ['监控合约数', s.cryptos ? s.cryptos.length : 0],
     ['最后检查', s.last_check_at ? new Date(s.last_check_at * 1000).toLocaleString() : '—'],
     ['最后告警', s.last_alert_at ? new Date(s.last_alert_at * 1000).toLocaleString() : '—'],
     ['启动时间', s.started_at ? new Date(s.started_at * 1000).toLocaleString() : '—'],
@@ -1004,6 +1275,7 @@ $('#btn-sync-holidays').addEventListener('click', async () => {
 // ========== 初始化 ==========
 loadStocks();
 loadFunds();
+loadCryptos();
 loadTemplates();
 loadWebhook();
 startQuoteRefresh();

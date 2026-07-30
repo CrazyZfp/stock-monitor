@@ -193,6 +193,54 @@ class FundConfig:
 
 
 @dataclass
+class CryptoConfig:
+    code: str          # "fapi:BTCUSDT" 或 "dapi:BTCUSD_PERP"
+    name: str
+    nickname: str = ""
+    price_high: Optional[float] = None
+    price_low: Optional[float] = None
+    cooldown_minutes: int = 5
+    enabled: bool = True
+    t_threshold: Optional[float] = None
+    t_events: list[dict] = field(default_factory=list)
+    t_s_enabled: bool = True
+    t_b_enabled: bool = True
+    disabled_alerts: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CryptoConfig":
+        t_events_raw = d.get("t_events", [])
+        t_events = []
+        for ev in t_events_raw:
+            ev = dict(ev)
+            ca = ev.get("created_at")
+            if isinstance(ca, str):
+                try:
+                    dt = datetime.strptime(ca, "%Y-%m-%d %H:%M:%S")
+                    ev["created_at"] = int(dt.timestamp())
+                except ValueError:
+                    ev["created_at"] = None
+            t_events.append(ev)
+        return cls(
+            code=d["code"],
+            name=d["name"],
+            nickname=d.get("nickname", ""),
+            price_high=d.get("price_high"),
+            price_low=d.get("price_low"),
+            cooldown_minutes=int(d.get("cooldown_minutes", 5)),
+            enabled=bool(d.get("enabled", True)),
+            t_threshold=d.get("t_threshold"),
+            t_events=t_events,
+            t_s_enabled=bool(d.get("t_s_enabled", True)),
+            t_b_enabled=bool(d.get("t_b_enabled", True)),
+            disabled_alerts=list(d.get("disabled_alerts", [])),
+        )
+
+
+@dataclass
 class Config:
     dingding_webhook: str = ""
     at_mobiles: list[str] = field(default_factory=list)
@@ -204,6 +252,7 @@ class Config:
     disguise_templates: dict[str, list[str]] = field(default_factory=dict)
     stocks: list[StockConfig] = field(default_factory=list)
     funds: list[FundConfig] = field(default_factory=list)
+    cryptos: list[CryptoConfig] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -216,6 +265,7 @@ class Config:
             "disguise_templates": self.disguise_templates,
             "stocks": [s.to_dict() for s in self.stocks],
             "funds": [f.to_dict() for f in self.funds],
+            "cryptos": [c.to_dict() for c in self.cryptos],
         }
 
     @classmethod
@@ -233,6 +283,7 @@ class Config:
             disguise_templates=merged_templates,
             stocks=[StockConfig.from_dict(x) for x in d.get("stocks", [])],
             funds=[FundConfig.from_dict(x) for x in d.get("funds", [])],
+            cryptos=[CryptoConfig.from_dict(x) for x in d.get("cryptos", [])],
         )
 
     def find_stock(self, code: str) -> Optional[StockConfig]:
@@ -245,6 +296,12 @@ class Config:
         for f in self.funds:
             if f.code == code:
                 return f
+        return None
+
+    def find_crypto(self, code: str) -> Optional[CryptoConfig]:
+        for c in self.cryptos:
+            if c.code == code:
+                return c
         return None
 
 

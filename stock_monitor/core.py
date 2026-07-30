@@ -80,6 +80,11 @@ class StockMonitor:
         self._limit_exhaust_seconds: int = 30
         self._limit_exhaust_samples: int = 3
 
+        # 合约品种集合（add_crypto 注册，用于 monitor_loop 区分 24/7 轮询）
+        self._crypto_codes: set[str] = set()
+        # 币安合约 symbol -> pricePrecision 缓存（启动时拉取 exchangeInfo）
+        self._crypto_precision: dict[str, int] = {}
+
         # 伪装消息模板（看起来像普通聊天）
         self.disguise_templates = {
             'price_high': [
@@ -212,6 +217,38 @@ class StockMonitor:
         self.t_events[fund_code] = []
         logger.info(f"添加监控基金: {config['name']} ({fund_code})")
 
+    def add_crypto(self, crypto_code: str, config: Dict):
+        """添加币安合约到监控（复用告警框架，但不启用涨跌停封单告警）"""
+        self.stocks[crypto_code] = config
+        self.price_history[crypto_code] = []
+        self.notification_cooldown[crypto_code] = {
+            'price_high': None,
+            'price_low': None,
+            't_sell': None,
+            't_buy': None,
+        }
+        self.price_alert_status[crypto_code] = {
+            'above_high': False,
+            'below_low': False,
+            '_high_init': False,
+            '_low_init': False,
+        }
+        self.yesterday_close[crypto_code] = 0.0
+        self.price_high_alerted_abs[crypto_code] = set()
+        self.price_low_alerted_abs[crypto_code] = set()
+        self.price_high_alerted_daily[crypto_code] = set()
+        self.price_low_alerted_daily[crypto_code] = set()
+        self.peak_since_high_alert[crypto_code] = 0.0
+        self.valley_since_low_alert[crypto_code] = float('inf')
+        self.retracement_armed[crypto_code] = False
+        self.bounce_armed[crypto_code] = False
+        self.t_events[crypto_code] = list(config.get('t_events', []))
+        # 合约无涨跌停：不初始化 _limit_state/_seal_history，check_limit_status 会自动 return 跳过
+        self._crypto_codes.add(crypto_code)
+        # 价格精度默认 2，fetch_crypto_prices 时从 exchangeInfo 更新
+        config.setdefault('price_precision', 2)
+        logger.info(f"添加监控合约: {config['name']} ({crypto_code})")
+
     # 天天基金 FundValuationLast 新估值接口（2026-07 fundgz JSONP 停用后替代）
     FUND_VALUATION_HOSTS = [
         "https://fundcomapi.tiantianfunds.com",
@@ -286,7 +323,95 @@ class StockMonitor:
                 self.price_history[code] = [p for p in self.price_history[code] if p['time'] > cutoff]
                 results[code] = gsz
         return results
-    
+
+    # 币安合约（USDⓈ-M 永续 fapi / COIN-M 永续 dapi）公开行情接口
+    CRYPTO_HOSTS = {
+        "fapi": "https://fapi.binance.com",
+        "dapi": "https://dapi.binance.com",
+    }
+
+    def fetch_crypto_exchange_info(self):
+        """拉取 fapi + dapi exchangeInfo，缓存永续合约 symbol -> pricePrecision"""
+        import requests
+        for prefix, host in self.CRYPTO_HOSTS.items():
+            url = f"{host}/{prefix}/v1/exchangeInfo"
+            try:
+                resp = requests.get(url, timeout=15)
+                if resp.status_code != 200:
+                    logger.error(f"合约 exchangeInfo {host} 失败: HTTP {resp.status_code}")
+                    continue
+                data = resp.json()
+                for sym in data.get("symbols", []):
+                    # 仅永续：fapi 默认永续；dapi 需 contractType==PERPETUAL
+                    if prefix == "dapi" and sym.get("contractType") != "PERPETUAL":
+                        continue
+                    symbol = sym.get("symbol")
+                    precision = sym.get("pricePrecision")
+                    if symbol and precision is not None:
+                        self._crypto_precision[f"{prefix}:{symbol}"] = int(precision)
+            except Exception as e:
+                logger.error(f"合约 exchangeInfo {host} 异常: {e}")
+        logger.info(f"合约精度缓存已加载: {len(self._crypto_precision)} 个 symbol")
+
+    def fetch_crypto_prices(self, crypto_codes: list[str]) -> dict[str, float]:
+        """批量获取币安合约最新价（按 fapi:/dapi: 前缀分组请求 /v1/ticker/24hr）"""
+        if not crypto_codes:
+            return {}
+        import requests
+        # 首次调用时懒加载精度缓存
+        if not self._crypto_precision:
+            self.fetch_crypto_exchange_info()
+
+        headers = {"User-Agent": "Mozilla/5.0"}
+        now = datetime.now()
+        cutoff = now - timedelta(hours=1)
+        results: dict[str, float] = {}
+
+        # 按网关前缀分组
+        groups: dict[str, list[str]] = {}
+        for code in crypto_codes:
+            prefix, _, symbol = code.partition(":")
+            if prefix not in self.CRYPTO_HOSTS:
+                logger.warning(f"未知合约前缀: {code}")
+                continue
+            groups.setdefault(prefix, []).append(symbol)
+
+        for prefix, symbols in groups.items():
+            host = self.CRYPTO_HOSTS[prefix]
+            # 逐 symbol 请求（24hr 端点带 symbol 参数权重=1，无参数返回全部权重高）
+            for symbol in symbols:
+                url = f"{host}/{prefix}/v1/ticker/24hr?symbol={symbol}"
+                try:
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    if resp.status_code != 200:
+                        logger.error(f"合约行情 {symbol} 失败: HTTP {resp.status_code}")
+                        continue
+                    item = resp.json()
+                    last_price = float(item.get("lastPrice", 0))
+                    if last_price <= 0:
+                        continue
+                    prev_close = 0.0
+                    try:
+                        prev_close = float(item.get("prevClosePrice", 0))
+                    except (ValueError, TypeError):
+                        pass
+                    code = f"{prefix}:{symbol}"
+                    if prev_close > 0:
+                        self.yesterday_close[code] = prev_close
+                    # 更新运行时价格精度（用于 generate_disguise_message 格式化）
+                    precision = self._crypto_precision.get(code)
+                    if precision is not None and code in self.stocks:
+                        self.stocks[code]['price_precision'] = precision
+                    self.price_history.setdefault(code, []).append({
+                        'time': now,
+                        'price': last_price,
+                    })
+                    self.price_history[code] = [p for p in self.price_history[code] if p['time'] > cutoff]
+                    results[code] = last_price
+                except Exception as e:
+                    logger.error(f"合约行情 {symbol} 异常: {e}")
+        return results
+
     def get_stock_price(self, stock_code: str) -> Optional[float]:
         """
         获取股票实时价格（使用公开API）
@@ -620,11 +745,16 @@ class StockMonitor:
 
         template = random.choice(self.disguise_templates[alert_type])
 
-        price_str = f"{current_price:.2f}"
-        threshold_str = f"{threshold:.2f}" if threshold is not None else ""
+        # 价格精度：合约品种按 exchangeInfo 的 pricePrecision，A 股/基金默认 2
+        precision = int(stock_info.get('price_precision', 2) if isinstance(stock_info, dict) else 2)
+        price_str = f"{current_price:.{precision}f}"
+        threshold_str = f"{threshold:.{precision}f}" if threshold is not None else ""
 
         name_val = (stock_info.get('name') or '').strip()
         nickname_val = (stock_info.get('nickname') or name_val).strip()
+
+        def _fmt_price(v):
+            return f"{v:.{precision}f}" if v is not None else ""
 
         message = template.format(
             name=name_val,
@@ -634,16 +764,16 @@ class StockMonitor:
             time=str(stock_info.get('speed_window', 5)),
             tier_index=str(tier_index) if tier_index is not None else "",
             tier_threshold=f"{tier_threshold:.2f}%" if tier_threshold is not None else "",
-            peak_price=f"{peak_price:.2f}" if peak_price is not None else "",
-            valley_price=f"{valley_price:.2f}" if valley_price is not None else "",
+            peak_price=_fmt_price(peak_price),
+            valley_price=_fmt_price(valley_price),
             daily_change=f"{daily_change:+.2f}%" if daily_change is not None else "",
             speed_change=f"{speed_change:+.2f}%" if speed_change is not None else "",
             retracement=f"{retrace_pct:+.2f}%" if retrace_pct is not None else "",
             bounce=f"{bounce_pct:+.2f}%" if bounce_pct is not None else "",
             t_type=str(t_type) if t_type is not None else "",
-            t_price=f"{t_price:.2f}" if t_price is not None else "",
+            t_price=_fmt_price(t_price),
             t_threshold=f"{t_threshold:.2f}%" if t_threshold is not None else "",
-            limit_price=f"{limit_price:.2f}" if limit_price is not None else "",
+            limit_price=_fmt_price(limit_price),
             sealed_lots=f"{sealed_lots:,}" if sealed_lots is not None else "",
             sealed_amount=f"{sealed_amount:,.2f}" if sealed_amount is not None else "",
             seal_min_lots=f"{seal_min_lots:,}" if seal_min_lots is not None else "",
@@ -1167,19 +1297,35 @@ class StockMonitor:
         return (next_start - now).total_seconds()
 
     def monitor_loop(self, interval_seconds: int = 30):
-        """监控循环（同一轮次多条通知合为一条发送，避免钉钉限流）"""
+        """监控循环（同一轮次多条通知合为一条发送，避免钉钉限流）
+
+        合约品种 24/7 交易，始终按 interval_seconds 轮询，不受 A 股交易时段限制。
+        """
         logger.info("开始股票监控...")
 
         while self.running:
             try:
                 sleep_seconds = StockMonitor._seconds_until_next_check(interval_seconds)
-                if sleep_seconds == interval_seconds:
+                # 有合约品种时，休眠不超过一个轮询周期（合约 24/7）
+                if self._crypto_codes:
+                    sleep_seconds = interval_seconds
+                if sleep_seconds == interval_seconds or self._crypto_codes:
                     self._batch_mode = True
                     self._alert_buffer.clear()
-                    codes = list(self.stocks.keys())
-                    if codes:
-                        prices = self.fetch_batch_prices(codes)
-                        for code in codes:
+                    # A 股 / 基金（仅交易时段）
+                    if sleep_seconds == interval_seconds:
+                        codes = [c for c in self.stocks if c not in self._crypto_codes]
+                        if codes:
+                            prices = self.fetch_batch_prices(codes)
+                            for code in codes:
+                                if code not in prices:
+                                    continue
+                                self.check_stock_alerts(code, override_price=prices[code])
+                    # 合约（始终轮询）
+                    if self._crypto_codes:
+                        crypto_codes = list(self._crypto_codes)
+                        prices = self.fetch_crypto_prices(crypto_codes)
+                        for code in crypto_codes:
                             if code not in prices:
                                 continue
                             self.check_stock_alerts(code, override_price=prices[code])
