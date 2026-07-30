@@ -191,6 +191,21 @@ class TestFetchCryptoPrices:
         assert m.yesterday_close["fapi:BTCUSDT"] == 64000.00
         assert m.stocks["fapi:BTCUSDT"]["price_precision"] == 2
 
+    def test_parses_dapi_list_response(self):
+        """dapi /v1/ticker/24hr 返回 list 而非 dict，应取 [0]"""
+        m = make_monitor()
+        add_crypto(m, "dapi:ETHUSD_PERP")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {"lastPrice": "1913.94", "prevClosePrice": "1916.10", "symbol": "ETHUSD_PERP"},
+        ]
+        with patch("requests.get", return_value=mock_resp):
+            m._crypto_precision = {"dapi:ETHUSD_PERP": 2}
+            prices = m.fetch_crypto_prices(["dapi:ETHUSD_PERP"])
+        assert prices["dapi:ETHUSD_PERP"] == 1913.94
+        assert m.yesterday_close["dapi:ETHUSD_PERP"] == 1916.10
+
 
 # ---------- Config 持久化 ----------
 

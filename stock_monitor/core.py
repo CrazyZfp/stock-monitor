@@ -386,7 +386,9 @@ class StockMonitor:
                     if resp.status_code != 200:
                         logger.error(f"合约行情 {symbol} 失败: HTTP {resp.status_code}")
                         continue
-                    item = resp.json()
+                    data = resp.json()
+                    # fapi 返回 dict；dapi 返回 list（单 symbol 取 [0]）
+                    item = data[0] if isinstance(data, list) else data
                     last_price = float(item.get("lastPrice", 0))
                     if last_price <= 0:
                         continue
