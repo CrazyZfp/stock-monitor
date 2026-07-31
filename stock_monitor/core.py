@@ -60,6 +60,9 @@ class StockMonitor:
         # 回撤 / 反弹触发许可标志：daily_up 触发时设 True，retracement 触发后设 False
         self.retracement_armed: dict[str, bool] = {}
         self.bounce_armed: dict[str, bool] = {}
+        # 盈亏告警状态：跨过持仓成本线时通知一次（True=已通知该侧）
+        self._profit_alerted: dict[str, bool] = {}
+        self._loss_alerted: dict[str, bool] = {}
         # 做T事件（运行时 + 持久化存于 config.json）
         self.t_events: dict[str, list[dict]] = {}
         # 当日已触发的 T 事件 ID 集合
@@ -111,11 +114,17 @@ class StockMonitor:
             'bounce': [
                 "🟢 {name} 反弹 {bounce}（谷值 {valley_price}，当前 {price}）"
             ],
+            'profit': [
+                "🟢 {name} 盈利 {profit_pct}（成本 {position_cost}，当前 {price}）"
+            ],
+            'loss': [
+                "🔴 {name} 亏损 {profit_pct}（成本 {position_cost}，当前 {price}）"
+            ],
             't_sell': [
-                "🔻 {name} 做T可买回：{t_price}→{price}（跌{t_threshold}%）"
+                "🔻 {name} 做T可买回：{t_price}→{price}（跌{t_threshold}%）{t_quantity}"
             ],
             't_buy': [
-                "🟢 {name} 做T可卖出：{t_price}→{price}（涨{t_threshold}%）"
+                "🟢 {name} 做T可卖出：{t_price}→{price}（涨{t_threshold}%）{t_quantity}"
             ],
             'limit_up': [
                 "🔴 {name} 涨停 封单{sealed_lots}手 {sealed_amount}万元"
@@ -170,6 +179,8 @@ class StockMonitor:
             'bounce': None,
             't_sell': None,
             't_buy': None,
+            'profit': None,
+            'loss': None,
         }
         self.price_alert_status[stock_code] = {
             'above_high': False,
@@ -185,6 +196,9 @@ class StockMonitor:
         self.price_low_alerted_daily[stock_code] = set()
         self.peak_since_high_alert[stock_code] = 0.0
         self.valley_since_low_alert[stock_code] = float('inf')
+        # 盈亏告警状态
+        self._profit_alerted[stock_code] = False
+        self._loss_alerted[stock_code] = False
         # 涨跌停封单告警状态
         self._latest_quote[stock_code] = {}
         self._limit_state[stock_code] = {'is_limit_up': False, 'is_limit_down': False, '_init': False}
@@ -203,6 +217,8 @@ class StockMonitor:
             'daily_down': None,
             'retracement': None,
             'bounce': None,
+            'profit': None,
+            'loss': None,
         }
         self.price_alert_status[fund_code] = {}
         self.yesterday_close[fund_code] = 0.0
@@ -214,6 +230,8 @@ class StockMonitor:
         self.valley_since_low_alert[fund_code] = float('inf')
         self.retracement_armed[fund_code] = False
         self.bounce_armed[fund_code] = False
+        self._profit_alerted[fund_code] = False
+        self._loss_alerted[fund_code] = False
         self.t_events[fund_code] = []
         logger.info(f"添加监控基金: {config['name']} ({fund_code})")
 
@@ -226,6 +244,8 @@ class StockMonitor:
             'price_low': None,
             't_sell': None,
             't_buy': None,
+            'profit': None,
+            'loss': None,
         }
         self.price_alert_status[crypto_code] = {
             'above_high': False,
@@ -242,6 +262,8 @@ class StockMonitor:
         self.valley_since_low_alert[crypto_code] = float('inf')
         self.retracement_armed[crypto_code] = False
         self.bounce_armed[crypto_code] = False
+        self._profit_alerted[crypto_code] = False
+        self._loss_alerted[crypto_code] = False
         self.t_events[crypto_code] = list(config.get('t_events', []))
         # 合约无涨跌停：不初始化 _limit_state/_seal_history，check_limit_status 会自动 return 跳过
         self._crypto_codes.add(crypto_code)
@@ -737,12 +759,14 @@ class StockMonitor:
                                  daily_change: float = None, speed_change: float = None,
                                  retrace_pct: float = None, bounce_pct: float = None,
                                  t_type: str = None, t_price: float = None,
-                                 t_threshold: float = None,
+                                 t_threshold: float = None, t_quantity: int = None,
                                  limit_price: float = None,
                                  sealed_lots: int = None,
                                  sealed_amount: float = None,
                                  seal_min_lots: int = None,
-                                 seal_eta_seconds: int = None,) -> str:
+                                 seal_eta_seconds: int = None,
+                                 position_cost: float = None,
+                                 profit_pct: float = None,) -> str:
         import random
 
         template = random.choice(self.disguise_templates[alert_type])
@@ -775,11 +799,14 @@ class StockMonitor:
             t_type=str(t_type) if t_type is not None else "",
             t_price=_fmt_price(t_price),
             t_threshold=f"{t_threshold:.2f}%" if t_threshold is not None else "",
+            t_quantity=f" {t_quantity}手" if t_quantity is not None else "",
             limit_price=_fmt_price(limit_price),
             sealed_lots=f"{sealed_lots:,}" if sealed_lots is not None else "",
             sealed_amount=f"{sealed_amount:,.2f}" if sealed_amount is not None else "",
             seal_min_lots=f"{seal_min_lots:,}" if seal_min_lots is not None else "",
             seal_eta_seconds=str(seal_eta_seconds) if seal_eta_seconds is not None else "",
+            position_cost=_fmt_price(position_cost),
+            profit_pct=f"{profit_pct:+.2f}%" if profit_pct is not None else "",
         )
 
         message += '.'
@@ -1027,6 +1054,47 @@ class StockMonitor:
                     self.price_low_alerted_abs[stock_code].clear()
                     alert_status['_low_init'] = False
     
+    def check_profit_loss(self, stock_code: str, current_price: float):
+        """检查盈亏：现价 vs 持仓成本，跨过成本线时通知一次"""
+        config = self.stocks[stock_code]
+        position_cost = config.get('position_cost')
+        if position_cost is None or position_cost <= 0:
+            return
+        disabled = set(config.get('disabled_alerts', []))
+        # 当日涨跌幅（消息里附带）
+        yesterday = self.yesterday_close.get(stock_code, 0.0)
+        daily_change = None
+        if yesterday > 0:
+            daily_change = (current_price - yesterday) / yesterday * 100
+        profit_pct = (current_price - position_cost) / position_cost * 100
+
+        if current_price > position_cost:
+            if not self._profit_alerted.get(stock_code, False):
+                if 'profit' not in disabled and self.check_cooldown(stock_code, 'profit'):
+                    self.send_dingding_notification(
+                        self.generate_disguise_message(
+                            'profit', config, current_price,
+                            position_cost=position_cost, profit_pct=profit_pct,
+                            daily_change=daily_change,
+                        )
+                    )
+                    self.update_cooldown(stock_code, 'profit')
+                self._profit_alerted[stock_code] = True
+                self._loss_alerted[stock_code] = False
+        else:
+            if not self._loss_alerted.get(stock_code, False):
+                if 'loss' not in disabled and self.check_cooldown(stock_code, 'loss'):
+                    self.send_dingding_notification(
+                        self.generate_disguise_message(
+                            'loss', config, current_price,
+                            position_cost=position_cost, profit_pct=profit_pct,
+                            daily_change=daily_change,
+                        )
+                    )
+                    self.update_cooldown(stock_code, 'loss')
+                self._loss_alerted[stock_code] = True
+                self._profit_alerted[stock_code] = False
+
     def check_surge_alert(self, stock_code: str, current_price: float):
         """
         检查涨跌幅告警
@@ -1126,6 +1194,7 @@ class StockMonitor:
                             self.generate_disguise_message(
                                 alert_type, config, current_price,
                                 t_price=ev_price, t_threshold=threshold, t_type='S',
+                                t_quantity=ev.get('quantity'),
                                 daily_change=t_daily,
                             )
                         )
@@ -1150,6 +1219,7 @@ class StockMonitor:
                             self.generate_disguise_message(
                                 alert_type, config, current_price,
                                 t_price=ev_price, t_threshold=threshold, t_type='B',
+                                t_quantity=ev.get('quantity'),
                                 daily_change=t_daily,
                             )
                         )
@@ -1182,6 +1252,10 @@ class StockMonitor:
             self.retracement_armed[code] = False
         for code in self.bounce_armed:
             self.bounce_armed[code] = False
+        for code in self._profit_alerted:
+            self._profit_alerted[code] = False
+        for code in self._loss_alerted:
+            self._loss_alerted[code] = False
         # 涨跌停封单状态重置
         for st in self._limit_state.values():
             st['is_limit_up'] = False
@@ -1221,6 +1295,9 @@ class StockMonitor:
 
         # 4. 检查涨跌停封单
         self.check_limit_status(stock_code, current_price)
+
+        # 5. 检查盈亏（持仓成本对比）
+        self.check_profit_loss(stock_code, current_price)
     
     @staticmethod
     def is_trading_day(date_obj) -> bool:

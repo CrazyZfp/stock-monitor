@@ -41,6 +41,7 @@
             <th>名称</th>
             <th>昵称</th>
             <th>报价</th>
+            <th>盈亏</th>
             <th>当前涨速</th>
             <th>涨跌停</th>
             <th>时间</th>
@@ -68,6 +69,7 @@
             <th>名称</th>
             <th>昵称</th>
             <th>净值</th>
+            <th>盈亏</th>
             <th>时间</th>
             <th>启用</th>
             <th>操作</th>
@@ -92,6 +94,7 @@
             <th>名称</th>
             <th>昵称</th>
             <th>报价</th>
+            <th>盈亏</th>
             <th>时间</th>
             <th>启用</th>
             <th>操作</th>
@@ -128,7 +131,10 @@
           <tr><td><code>{valley_price}</code></td><td>反弹前谷值</td><td><code>bounce</code></td><td>最近一次跌破后达到的最低价</td></tr>
           <tr><td><code>{t_type}</code></td><td>做T操作类型</td><td><code>t_sell</code> / <code>t_buy</code></td><td><code>S</code> 表示先卖后买，<code>B</code> 表示先买后卖</td></tr>
           <tr><td><code>{t_price}</code></td><td>做T事件价格</td><td><code>t_sell</code> / <code>t_buy</code></td><td>添加 S/B 事件时记录的价格</td></tr>
-          <tr><td><code>{t_threshold}</code></td><td>做T百分比</td><td><code>t_sell</code> / <code>t_buy</code></td><td>取自股票配置的做T阈值，格式如 <code>3.00%</code></td></tr>
+            <tr><td><code>{t_threshold}</code></td><td>做T百分比</td><td><code>t_sell</code> / <code>t_buy</code></td><td>取自股票配置的做T阈值，格式如 <code>3.00%</code></td></tr>
+            <tr><td><code>{t_quantity}</code></td><td>做T数量</td><td><code>t_sell</code> / <code>t_buy</code></td><td>添加 S/B 事件时填写的交易数量（股票以手为单位），未填则为空</td></tr>
+            <tr><td><code>{position_cost}</code></td><td>持仓成本</td><td><code>profit</code> / <code>loss</code></td><td>资产配置的持仓成本价，格式如 <code>19.80</code></td></tr>
+            <tr><td><code>{profit_pct}</code></td><td>盈亏百分比</td><td><code>profit</code> / <code>loss</code></td><td>现价相对持仓成本的盈亏百分比，格式如 <code>+3.00%</code></td></tr>
           <tr><td><code>{limit_price}</code></td><td>涨/跌停价</td><td><code>limit_up</code> / <code>limit_down</code> 等</td><td>涨停或跌停价，格式如 <code>11.00</code></td></tr>
           <tr><td><code>{sealed_lots}</code></td><td>封单手数</td><td>涨跌停相关</td><td>封单量（手，1手=100股），带千分位如 <code>100,000</code></td></tr>
           <tr><td><code>{sealed_amount}</code></td><td>封单金额</td><td>涨跌停相关</td><td>封单金额（万元），如 <code>11,000.00</code></td></tr>
@@ -217,6 +223,26 @@
         <div class="preview-row">
           <button type="button" class="btn btn-preview" data-type="bounce">预览</button>
           <div class="preview-box" id="preview-bounce" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>profit (盈利，现价上穿持仓成本)</label>
+          <textarea name="profit" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="profit">预览</button>
+          <div class="preview-box" id="preview-profit" hidden></div>
+        </div>
+      </div>
+      <div class="template-row">
+        <div class="form-row">
+          <label>loss (亏损，现价下穿持仓成本)</label>
+          <textarea name="loss" rows="2"></textarea>
+        </div>
+        <div class="preview-row">
+          <button type="button" class="btn btn-preview" data-type="loss">预览</button>
+          <div class="preview-box" id="preview-loss" hidden></div>
         </div>
       </div>
       <div class="template-row">
@@ -444,6 +470,7 @@
       <div><label>名称</label><input name="name" id="stock-name-input" placeholder="自动填充或手动输入" required></div>
     </div>
     <div class="form-row"><label>昵称 (告警消息里显示，可选)</label><input name="nickname" placeholder="留空则用名称"></div>
+    <div class="form-row"><label>持仓成本 (空=不监控盈亏)</label><div class="input-with-toggle"><input name="position_cost" type="number" step="0.0001" placeholder="选填，用于盈亏通知"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="profit" data-input="position_cost" checked> 盈</label><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="loss" data-input="position_cost" checked> 亏</label></div></div>
     <div class="form-grid">
       <div class="form-row"><label>高价阈值 (空=不限)</label><div class="input-with-toggle"><input name="price_high" type="number" step="0.01"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="price_high" data-input="price_high" checked> 通知</label></div></div>
       <div class="form-row"><label>低价阈值 (空=不限)</label><div class="input-with-toggle"><input name="price_low" type="number" step="0.01"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="price_low" data-input="price_low" checked> 通知</label></div></div>
@@ -487,6 +514,10 @@
       <label>目标价格（选填，留空=使用做T阈值）</label>
       <input type="number" step="0.01" id="t-event-target-price" placeholder="选填">
     </div>
+    <div class="form-row">
+      <label>交易数量（选填，<span id="t-event-quantity-unit">股票以手为单位</span>）</label>
+      <input type="number" step="1" min="1" id="t-event-quantity" placeholder="选填">
+    </div>
     <div class="actions">
       <button type="button" class="btn" id="t-event-cancel">取消</button>
       <button type="submit" class="btn btn-primary">确认</button>
@@ -511,6 +542,7 @@
       <div><label>名称</label><input name="name" id="fund-name-input" placeholder="自动填充或手动输入" required></div>
     </div>
     <div class="form-row"><label>昵称 (告警消息里显示，可选)</label><input name="nickname" placeholder="留空则用名称"></div>
+    <div class="form-row"><label>持仓成本 (空=不监控盈亏)</label><div class="input-with-toggle"><input name="position_cost" type="number" step="0.0001" placeholder="选填，用于盈亏通知"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="profit" data-input="position_cost" checked> 盈</label><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="loss" data-input="position_cost" checked> 亏</label></div></div>
     <div class="form-grid">
       <div class="form-row"><label>当日涨幅多档 %</label><div class="input-with-toggle"><input name="daily_change_up" placeholder="如 2,5,8"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="daily_up" data-input="daily_change_up" checked> 通知</label></div></div>
       <div class="form-row"><label>当日跌幅多档 %</label><div class="input-with-toggle"><input name="daily_change_down" placeholder="如 2,5,8"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="daily_down" data-input="daily_change_down" checked> 通知</label></div></div>
@@ -542,6 +574,7 @@
       <div><label>名称</label><input name="name" id="crypto-name-input" placeholder="自动填充或手动输入" required></div>
     </div>
     <div class="form-row"><label>昵称 (告警消息里显示，可选)</label><input name="nickname" placeholder="留空则用名称"></div>
+    <div class="form-row"><label>持仓成本 (空=不监控盈亏)</label><div class="input-with-toggle"><input name="position_cost" type="number" step="any" placeholder="选填，用于盈亏通知"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="profit" data-input="position_cost" checked> 盈</label><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="loss" data-input="position_cost" checked> 亏</label></div></div>
     <div class="form-grid">
       <div class="form-row"><label>高价阈值 (空=不限)</label><div class="input-with-toggle"><input name="price_high" type="number" step="any"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="price_high" data-input="price_high" checked> 通知</label></div></div>
       <div class="form-row"><label>低价阈值 (空=不限)</label><div class="input-with-toggle"><input name="price_low" type="number" step="any"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="price_low" data-input="price_low" checked> 通知</label></div></div>

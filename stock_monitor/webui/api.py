@@ -21,6 +21,7 @@ class StockIn(BaseModel):
     code: str = Field(..., min_length=1, max_length=16)
     name: str
     nickname: str = ""
+    position_cost: Optional[float] = None
     price_high: Optional[float] = None
     price_low: Optional[float] = None
     speed_threshold: Optional[float] = None
@@ -47,6 +48,7 @@ class FundIn(BaseModel):
     code: str = Field(..., min_length=6, max_length=6)
     name: str
     nickname: str = ""
+    position_cost: Optional[float] = None
     cooldown_minutes: int = 5
     enabled: bool = True
     daily_change_up: list[float] = Field(default_factory=list)
@@ -64,6 +66,7 @@ class CryptoIn(BaseModel):
     code: str = Field(..., min_length=5, max_length=32)
     name: str
     nickname: str = ""
+    position_cost: Optional[float] = None
     price_high: Optional[float] = None
     price_low: Optional[float] = None
     cooldown_minutes: int = 5
@@ -103,6 +106,7 @@ class TEventIn(BaseModel):
     type: str  # "S" or "B"
     price: float
     target_price: Optional[float] = None
+    quantity: Optional[int] = None
 
 
 class StatusOut(BaseModel):
@@ -149,6 +153,9 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         "t_type": "S",
         "t_price": "10.00",
         "t_threshold": "3.00%",
+        "t_quantity": " 100手",
+        "position_cost": "9.50",
+        "profit_pct": "+5.26%",
         "limit_price": "11.00",
         "sealed_lots": "100,000",
         "sealed_amount": "11,000.00",
@@ -169,6 +176,9 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         base["t_type"] = ""
         base["t_price"] = ""
         base["t_threshold"] = ""
+        base["t_quantity"] = ""
+        base["position_cost"] = ""
+        base["profit_pct"] = ""
         base["limit_price"] = ""
         base["sealed_lots"] = ""
         base["sealed_amount"] = ""
@@ -221,6 +231,7 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         base["t_type"] = "S"
         base["t_price"] = "10.00"
         base["t_threshold"] = f"{th:.2f}%"
+        base["t_quantity"] = " 100手"
         base["price"] = f"{10.0 * (1 - th / 100):.2f}"
         base["daily_change"] = "-2.00%"
         base["threshold"] = ""
@@ -229,8 +240,23 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         base["t_type"] = "B"
         base["t_price"] = "10.00"
         base["t_threshold"] = f"{th:.2f}%"
+        base["t_quantity"] = " 100手"
         base["price"] = f"{10.0 * (1 + th / 100):.2f}"
         base["daily_change"] = "+2.00%"
+        base["threshold"] = ""
+    elif alert_type == "profit":
+        cost = stock.position_cost if stock is not None and stock.position_cost is not None else 9.5
+        base["position_cost"] = f"{cost:.2f}"
+        base["price"] = f"{cost * 1.05:.2f}"
+        base["profit_pct"] = "+5.00%"
+        base["daily_change"] = "+2.00%"
+        base["threshold"] = ""
+    elif alert_type == "loss":
+        cost = stock.position_cost if stock is not None and stock.position_cost is not None else 9.5
+        base["position_cost"] = f"{cost:.2f}"
+        base["price"] = f"{cost * 0.95:.2f}"
+        base["profit_pct"] = "-5.00%"
+        base["daily_change"] = "-2.00%"
         base["threshold"] = ""
     elif alert_type == "limit_up":
         base["price"] = "11.00"
@@ -516,13 +542,13 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     def add_t_event(code: str, payload: TEventIn):
         if payload.type not in ("S", "B"):
             raise HTTPException(400, "type 必须为 S 或 B")
-        event = manager.add_t_event(code, payload.type, payload.price, target_price=payload.target_price)
+        event = manager.add_t_event(code, payload.type, payload.price, target_price=payload.target_price, quantity=payload.quantity)
         return event
 
     @router.put("/stocks/{code}/t-events/{event_id}")
     @router.put("/cryptos/{code}/t-events/{event_id}")
     def update_t_event(code: str, event_id: str, payload: TEventIn):
-        event = manager.update_t_event(code, event_id, price=payload.price, target_price=payload.target_price)
+        event = manager.update_t_event(code, event_id, price=payload.price, target_price=payload.target_price, quantity=payload.quantity, quantity_set=True)
         if event is None:
             raise HTTPException(404, f"事件 {event_id} 不存在")
         return event
@@ -553,7 +579,7 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
 
     @router.post("/templates/preview")
     def preview_template(payload: TemplatePreviewIn):
-        VALID_TYPES = ("price_high", "price_low", "daily_up", "daily_down", "surge_up", "surge_down", "retracement", "bounce", "t_sell", "t_buy", "limit_up", "limit_up_broken", "limit_up_low_seal", "limit_up_exhaust", "limit_down", "limit_down_broken", "limit_down_low_seal", "limit_down_exhaust")
+        VALID_TYPES = ("price_high", "price_low", "daily_up", "daily_down", "surge_up", "surge_down", "retracement", "bounce", "profit", "loss", "t_sell", "t_buy", "limit_up", "limit_up_broken", "limit_up_low_seal", "limit_up_exhaust", "limit_down", "limit_down_broken", "limit_down_low_seal", "limit_down_exhaust")
         if payload.alert_type not in VALID_TYPES:
             raise HTTPException(400, f"未知 alert_type: {payload.alert_type}")
         cfg = manager.get_config()

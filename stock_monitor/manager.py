@@ -444,7 +444,7 @@ class MonitorManager:
 
     # ===== 做T事件 =====
 
-    def add_t_event(self, code: str, event_type: str, price: float, target_price: Optional[float] = None) -> dict:
+    def add_t_event(self, code: str, event_type: str, price: float, target_price: Optional[float] = None, quantity: Optional[int] = None) -> dict:
         """添加做T事件，持久化到 config + 同步到 monitor 运行时"""
         import uuid
         event = {
@@ -452,6 +452,7 @@ class MonitorManager:
             "type": event_type,
             "price": price,
             "target_price": target_price,
+            "quantity": quantity,
             "created_at": int(time.time()),
         }
         with self._lock:
@@ -470,7 +471,7 @@ class MonitorManager:
                 self.monitor.t_events[code].append(event)
         return event
 
-    def update_t_event(self, code: str, event_id: str, price: Optional[float] = None, target_price: Optional[float] = None) -> Optional[dict]:
+    def update_t_event(self, code: str, event_id: str, price: Optional[float] = None, target_price: Optional[float] = None, quantity: Optional[int] = None, quantity_set: bool = False) -> Optional[dict]:
         """更新做T事件，持久化到 config + 同步到 monitor 运行时"""
         with self._lock:
             updated_event: Optional[dict] = None
@@ -484,6 +485,8 @@ class MonitorManager:
                     if ev.get("id") == event_id:
                         ev["price"] = price
                         ev["target_price"] = target_price
+                        if quantity_set:
+                            ev["quantity"] = quantity
                         updated_event = dict(ev)
                         break
 
@@ -502,6 +505,8 @@ class MonitorManager:
                             ev["target_price"] = target_price
                         if target_price is None and "target_price" not in ev:
                             ev["target_price"] = None
+                        if quantity_set:
+                            ev["quantity"] = quantity
                         break
 
         return updated_event
@@ -576,6 +581,7 @@ class MonitorManager:
         return {
             "name": s.name,
             "nickname": s.nickname,
+            "position_cost": s.position_cost,
             "price_high": s.price_high,
             "price_low": s.price_low,
             "speed_threshold": s.speed_threshold,
@@ -597,6 +603,7 @@ class MonitorManager:
         return {
             "name": f.name,
             "nickname": f.nickname,
+            "position_cost": f.position_cost,
             "cooldown_minutes": f.cooldown_minutes,
             "daily_change_up": list(f.daily_change_up),
             "daily_change_down": list(f.daily_change_down),
@@ -609,6 +616,7 @@ class MonitorManager:
         return {
             "name": c.name,
             "nickname": c.nickname,
+            "position_cost": c.position_cost,
             "price_high": c.price_high,
             "price_low": c.price_low,
             "cooldown_minutes": c.cooldown_minutes,

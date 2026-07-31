@@ -67,6 +67,14 @@ function fmtAmountWan(v) {
   return w.toFixed(2);
 }
 
+function profitLossHtml(cost, price) {
+  if (cost == null || cost <= 0 || price == null) return '<span class="muted">—</span>';
+  const pct = (price - cost) / cost * 100;
+  const cls = price > cost ? 'quote-up' : price < cost ? 'quote-down' : 'quote-flat';
+  const sign = pct > 0 ? '+' : '';
+  return `<div class="${cls}">${sign}${pct.toFixed(2)}%</div>`;
+}
+
 function renderLimit(q) {
   const s = q.limit_status;
   if (s == null || s === 'unknown') return '<span class="muted">—</span>';
@@ -116,12 +124,13 @@ function renderTList(container, events) {
     const label = isS ? 'S↓' : 'B↑';
     const priceStr = fmtPrice(e.price);
     const targetStr = e.target_price != null ? `→ ${fmtPrice(e.target_price)}` : '';
+    const qtyStr = e.quantity != null ? ` ${e.quantity}手` : '';
     const triggerIcon = e.triggered
       ? `<span class="t-trigger triggered" data-treset="${escapeHtml(e.id)}" data-tcode="${escapeHtml(container.dataset.tlist)}"></span>`
       : `<span class="t-trigger pending"></span>`;
-    return `<span class="t-event-tag${isS ? ' type-s' : ' type-b'}" title="${escapeHtml(new Date(e.created_at * 1000).toLocaleString())} @ ${e.price}${e.target_price != null ? ' → ' + e.target_price : ''}">
+    return `<span class="t-event-tag${isS ? ' type-s' : ' type-b'}" title="${escapeHtml(new Date(e.created_at * 1000).toLocaleString())} @ ${e.price}${e.target_price != null ? ' → ' + e.target_price : ''}${e.quantity != null ? ' ' + e.quantity + '手' : ''}">
       ${triggerIcon}
-      <span class="t-event-edit" data-tedit="${escapeHtml(e.id)}" data-tcode="${escapeHtml(container.dataset.tlist)}">${label} ${priceStr} ${targetStr}</span>
+      <span class="t-event-edit" data-tedit="${escapeHtml(e.id)}" data-tcode="${escapeHtml(container.dataset.tlist)}">${label} ${priceStr} ${targetStr}${qtyStr}</span>
       <button class="btn-t-del" data-tdel="${escapeHtml(e.id)}" data-tcode="${escapeHtml(container.dataset.tlist)}">×</button>
     </span>`;
   }).join(' ');
@@ -141,6 +150,7 @@ function renderStocks() {
         <div class="quote-price">${fmtPrice(q.price)}</div>
         <div class="quote-change">${fmtChange(q.change_percent)}</div>
       </td>
+      <td>${profitLossHtml(s.position_cost, q.price)}</td>
       <td class="${q.surge_change != null ? priceCellClass(q.surge_change) : ''}" title="${q.surge_change != null ? `基准价: ${fmtPrice(q.surge_base_price)} @ ${new Date(q.surge_base_time * 1000).toLocaleString()}` : ''}">
         ${q.surge_change != null ? fmtChange(q.surge_change) : '—'}
       </td>
@@ -234,6 +244,8 @@ $('#stocks-table').addEventListener('click', async (e) => {
     $('#t-event-dialog-title').textContent = `新增${type === 'S' ? '先卖后买(S)' : '先买后卖(B)'} (${s?.name})`;
     $('#t-event-price').value = defaultPrice ? fmtPrice(defaultPrice) : '';
     $('#t-event-target-price').value = '';
+    $('#t-event-quantity').value = '';
+    $('#t-event-quantity-unit').textContent = '股票以手为单位';
     $('#t-event-dialog').showModal();
     return;
   }
@@ -273,6 +285,8 @@ $('#stocks-table').addEventListener('click', async (e) => {
     $('#t-event-dialog-title').textContent = `编辑${ev.type === 'S' ? '先卖后买(S)' : '先买后卖(B)'} (${s?.name})`;
     $('#t-event-price').value = fmtPrice(ev.price);
     $('#t-event-target-price').value = ev.target_price != null ? fmtPrice(ev.target_price) : '';
+    $('#t-event-quantity').value = ev.quantity != null ? ev.quantity : '';
+    $('#t-event-quantity-unit').textContent = '股票以手为单位';
     $('#t-event-dialog').showModal();
     return;
   }
@@ -322,6 +336,7 @@ function renderFunds() {
           ? '<div class="quote-price muted">暂无盘中估值</div><div class="quote-change">—</div>'
           : `<div class="quote-price">${fmtPrice(q.estimated_nav)}</div><div class="quote-change">${fmtChange(q.change_percent)}</div>`}
       </td>
+      <td>${profitLossHtml(f.position_cost, q.estimated_nav)}</td>
       <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : (q.nav != null ? '净值 ' + fmtPrice(q.nav) : '—')}</td>
       <td><label class="switch"><input type="checkbox" ${f.enabled ? 'checked' : ''} data-code="${escapeHtml(f.code)}" class="toggle-fund"><span class="slider"></span></label></td>
       <td>
@@ -380,6 +395,7 @@ function renderCryptos() {
         <div class="quote-price">${fmtPriceP(q.price, prec)}</div>
         <div class="quote-change">${fmtChange(q.change_percent)}</div>
       </td>
+      <td>${profitLossHtml(c.position_cost, q.price)}</td>
       <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
       <td><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''} data-code="${escapeHtml(c.code)}" class="toggle-crypto"><span class="slider"></span></label></td>
       <td>
@@ -414,6 +430,8 @@ $('#cryptos-table').addEventListener('click', async (e) => {
     $('#t-event-dialog-title').textContent = `新增${type === 'S' ? '先卖后买(S)' : '先买后卖(B)'} (${c?.name})`;
     $('#t-event-price').value = defaultPrice ? fmtPriceP(defaultPrice, prec) : '';
     $('#t-event-target-price').value = '';
+    $('#t-event-quantity').value = '';
+    $('#t-event-quantity-unit').textContent = '合约以张为单位';
     $('#t-event-dialog').showModal();
     return;
   }
@@ -454,6 +472,8 @@ $('#cryptos-table').addEventListener('click', async (e) => {
     $('#t-event-dialog-title').textContent = `编辑${ev.type === 'S' ? '先卖后买(S)' : '先买后卖(B)'} (${c?.name})`;
     $('#t-event-price').value = fmtPriceP(ev.price, prec);
     $('#t-event-target-price').value = ev.target_price != null ? fmtPriceP(ev.target_price, prec) : '';
+    $('#t-event-quantity').value = ev.quantity != null ? ev.quantity : '';
+    $('#t-event-quantity-unit').textContent = '合约以张为单位';
     $('#t-event-dialog').showModal();
     return;
   }
@@ -593,6 +613,7 @@ $('#crypto-form').addEventListener('submit', async (e) => {
     code,
     name: form.elements.name.value.trim(),
     nickname: form.elements.nickname.value.trim(),
+    position_cost: numOrNull(form.elements.position_cost.value),
     price_high: numOrNull(form.elements.price_high.value),
     price_low: numOrNull(form.elements.price_low.value),
     cooldown_minutes: Number(form.elements.cooldown_minutes.value),
@@ -720,6 +741,7 @@ $('#fund-form').addEventListener('submit', async (e) => {
     code,
     name: form.elements.name.value.trim(),
     nickname: form.elements.nickname.value.trim(),
+    position_cost: numOrNull(form.elements.position_cost.value),
     cooldown_minutes: Number(form.elements.cooldown_minutes.value),
     enabled: true,
     daily_change_up: form.elements.daily_change_up.value.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)),
@@ -757,18 +779,24 @@ $('#t-event-form').addEventListener('submit', async (e) => {
     const tp = parseFloat(targetInput);
     if (!isNaN(tp) && tp > 0) targetPrice = tp;
   }
+  const qtyInput = $('#t-event-quantity').value.trim();
+  let quantity = null;
+  if (qtyInput) {
+    const q = parseInt(qtyInput, 10);
+    if (!isNaN(q) && q > 0) quantity = q;
+  }
   try {
     const base = currentTEvent.source === 'crypto' ? 'cryptos' : 'stocks';
     if (currentTEvent.action === 'add') {
       await api(`/api/${base}/${currentTEvent.code}/t-events`, {
         method: 'POST',
-        body: JSON.stringify({ type: currentTEvent.type, price, target_price: targetPrice })
+        body: JSON.stringify({ type: currentTEvent.type, price, target_price: targetPrice, quantity })
       });
       toast(`已添加 ${currentTEvent.type} @ ${fmtPrice(price)}`);
     } else {
       await api(`/api/${base}/${currentTEvent.code}/t-events/${currentTEvent.eventId}`, {
         method: 'PUT',
-        body: JSON.stringify({ type: currentTEvent.type, price, target_price: targetPrice })
+        body: JSON.stringify({ type: currentTEvent.type, price, target_price: targetPrice, quantity })
       });
       toast('已更新');
     }
@@ -861,6 +889,7 @@ $('#stock-form').addEventListener('submit', async (e) => {
     code,
     name: form.elements.name.value.trim(),
     nickname: form.elements.nickname.value.trim(),
+    position_cost: numOrNull(form.elements.position_cost.value),
     price_high: numOrNull(form.elements.price_high.value),
     price_low: numOrNull(form.elements.price_low.value),
     speed_threshold: numOrNull(form.elements.speed_threshold.value),

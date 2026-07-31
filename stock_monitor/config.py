@@ -28,8 +28,10 @@ DEFAULT_TEMPLATES = {
     "surge_down": ["⏬️ {name},{speed_change}({time})"],
     "retracement": ["🔻 {name} 回撤 {retracement}（峰值 {peak_price}，当前 {price}）"],
     "bounce": ["🟢 {name} 反弹 {bounce}（谷值 {valley_price}，当前 {price}）"],
-    "t_sell": ["🔻 {name} 做T可买回：{t_price}→{price}（跌{t_threshold}%）"],
-    "t_buy": ["🟢 {name} 做T可卖出：{t_price}→{price}（涨{t_threshold}%）"],
+    "profit": ["🟢 {name} 盈利 {profit_pct}（成本 {position_cost}，当前 {price}）"],
+    "loss": ["🔴 {name} 亏损 {profit_pct}（成本 {position_cost}，当前 {price}）"],
+    "t_sell": ["🔻 {name} 做T可买回：{t_price}→{price}（跌{t_threshold}%）{t_quantity}"],
+    "t_buy": ["🟢 {name} 做T可卖出：{t_price}→{price}（涨{t_threshold}%）{t_quantity}"],
     "limit_up": ["🔴 {name} 涨停 封单{sealed_lots}手 {sealed_amount}万元"],
     "limit_up_broken": ["🟡 {name} 涨停开板 现{price}"],
     "limit_up_low_seal": ["⚠️ {name} 涨停封单不足{seal_min_lots}手 现{sealed_lots}手"],
@@ -65,6 +67,7 @@ class StockConfig:
     code: str
     name: str
     nickname: str = ""
+    position_cost: Optional[float] = None
     price_high: Optional[float] = None
     price_low: Optional[float] = None
     speed_threshold: Optional[float] = None      # 涨速阈值（监控窗口内）
@@ -135,6 +138,7 @@ class StockConfig:
             code=d["code"],
             name=d["name"],
             nickname=d.get("nickname", ""),
+            position_cost=d.get("position_cost"),
             price_high=d.get("price_high"),
             price_low=d.get("price_low"),
             speed_threshold=speed_th,
@@ -159,6 +163,7 @@ class FundConfig:
     code: str
     name: str
     nickname: str = ""
+    position_cost: Optional[float] = None
     cooldown_minutes: int = 5
     enabled: bool = True
     daily_change_up: list[float] = field(default_factory=list)
@@ -182,6 +187,7 @@ class FundConfig:
             code=d["code"],
             name=d["name"],
             nickname=d.get("nickname", ""),
+            position_cost=d.get("position_cost"),
             cooldown_minutes=int(d.get("cooldown_minutes", 5)),
             enabled=bool(d.get("enabled", True)),
             daily_change_up=list(d.get("daily_change_up", [])),
@@ -197,6 +203,7 @@ class CryptoConfig:
     code: str          # "fapi:BTCUSDT" 或 "dapi:BTCUSD_PERP"
     name: str
     nickname: str = ""
+    position_cost: Optional[float] = None
     price_high: Optional[float] = None
     price_low: Optional[float] = None
     cooldown_minutes: int = 5
@@ -228,6 +235,7 @@ class CryptoConfig:
             code=d["code"],
             name=d["name"],
             nickname=d.get("nickname", ""),
+            position_cost=d.get("position_cost"),
             price_high=d.get("price_high"),
             price_low=d.get("price_low"),
             cooldown_minutes=int(d.get("cooldown_minutes", 5)),
