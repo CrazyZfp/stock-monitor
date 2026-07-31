@@ -208,6 +208,8 @@ class CryptoConfig:
     leverage: Optional[float] = None   # 倍率，空=1
     price_high: Optional[float] = None
     price_low: Optional[float] = None
+    daily_change_up: list[float] = field(default_factory=list)
+    daily_change_down: list[float] = field(default_factory=list)
     cooldown_minutes: int = 5
     enabled: bool = True
     t_threshold: Optional[float] = None
@@ -245,6 +247,8 @@ class CryptoConfig:
             leverage=d.get("leverage"),
             price_high=d.get("price_high"),
             price_low=d.get("price_low"),
+            daily_change_up=list(d.get("daily_change_up", [])),
+            daily_change_down=list(d.get("daily_change_down", [])),
             cooldown_minutes=int(d.get("cooldown_minutes", 5)),
             enabled=bool(d.get("enabled", True)),
             t_threshold=d.get("t_threshold"),

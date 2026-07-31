@@ -515,7 +515,9 @@ function openCryptoDialog(crypto) {
     for (const [k, v] of Object.entries(crypto)) {
       if (k === 'quote') continue;
       if (form.elements[k]) {
-        if (k === 'code') {
+        if (k === 'daily_change_up' || k === 'daily_change_down') {
+          form.elements[k].value = (v || []).join(', ');
+        } else if (k === 'code') {
           form.elements[k].value = v ?? '';
           $('#crypto-code-display').value = v ?? '';
           $('#crypto-search-input').value = (crypto.name || '') + ' (' + (v ?? '') + ')';
@@ -620,6 +622,8 @@ $('#crypto-form').addEventListener('submit', async (e) => {
     leverage: numOrNull(form.elements.leverage.value),
     price_high: numOrNull(form.elements.price_high.value),
     price_low: numOrNull(form.elements.price_low.value),
+    daily_change_up: form.elements.daily_change_up.value.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)),
+    daily_change_down: form.elements.daily_change_down.value.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n)),
     cooldown_minutes: Number(form.elements.cooldown_minutes.value),
     enabled: true,
     t_threshold: numOrNull(form.elements.t_threshold.value),

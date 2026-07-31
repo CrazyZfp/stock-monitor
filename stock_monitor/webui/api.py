@@ -71,6 +71,8 @@ class CryptoIn(BaseModel):
     leverage: Optional[float] = None
     price_high: Optional[float] = None
     price_low: Optional[float] = None
+    daily_change_up: list[float] = Field(default_factory=list)
+    daily_change_down: list[float] = Field(default_factory=list)
     cooldown_minutes: int = 5
     enabled: bool = True
     t_threshold: Optional[float] = None

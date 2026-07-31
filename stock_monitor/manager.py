@@ -621,6 +621,8 @@ class MonitorManager:
             "leverage": c.leverage,
             "price_high": c.price_high,
             "price_low": c.price_low,
+            "daily_change_up": list(c.daily_change_up),
+            "daily_change_down": list(c.daily_change_down),
             "cooldown_minutes": c.cooldown_minutes,
             "t_threshold": c.t_threshold,
             "t_events": list(c.t_events),
