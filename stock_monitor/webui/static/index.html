@@ -134,7 +134,9 @@
             <tr><td><code>{t_threshold}</code></td><td>做T百分比</td><td><code>t_sell</code> / <code>t_buy</code></td><td>取自股票配置的做T阈值，格式如 <code>3.00%</code></td></tr>
             <tr><td><code>{t_quantity}</code></td><td>做T数量</td><td><code>t_sell</code> / <code>t_buy</code></td><td>添加 S/B 事件时填写的交易数量（股票以手为单位），未填则为空</td></tr>
             <tr><td><code>{position_cost}</code></td><td>持仓成本</td><td><code>profit</code> / <code>loss</code></td><td>资产配置的持仓成本价，格式如 <code>19.80</code></td></tr>
-            <tr><td><code>{profit_pct}</code></td><td>盈亏百分比</td><td><code>profit</code> / <code>loss</code></td><td>现价相对持仓成本的盈亏百分比，格式如 <code>+3.00%</code></td></tr>
+            <tr><td><code>{profit_pct}</code></td><td>盈亏百分比</td><td><code>profit</code> / <code>loss</code></td><td>现价相对持仓成本的盈亏百分比（合约已按方向和倍率折算），格式如 <code>+3.00%</code></td></tr>
+            <tr><td><code>{direction}</code></td><td>合约方向</td><td><code>profit</code> / <code>loss</code></td><td>合约方向，<code>多</code> 或 <code>空</code>（股票/基金为空）</td></tr>
+            <tr><td><code>{leverage}</code></td><td>合约倍率</td><td><code>profit</code> / <code>loss</code></td><td>合约杠杆倍率，如 <code>10倍</code>（未填则为空）</td></tr>
           <tr><td><code>{limit_price}</code></td><td>涨/跌停价</td><td><code>limit_up</code> / <code>limit_down</code> 等</td><td>涨停或跌停价，格式如 <code>11.00</code></td></tr>
           <tr><td><code>{sealed_lots}</code></td><td>封单手数</td><td>涨跌停相关</td><td>封单量（手，1手=100股），带千分位如 <code>100,000</code></td></tr>
           <tr><td><code>{sealed_amount}</code></td><td>封单金额</td><td>涨跌停相关</td><td>封单金额（万元），如 <code>11,000.00</code></td></tr>
@@ -575,6 +577,10 @@
     </div>
     <div class="form-row"><label>昵称 (告警消息里显示，可选)</label><input name="nickname" placeholder="留空则用名称"></div>
     <div class="form-row"><label>持仓成本 (空=不监控盈亏)</label><div class="input-with-toggle"><input name="position_cost" type="number" step="any" placeholder="选填，用于盈亏通知"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="profit" data-input="position_cost" checked> 盈</label><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="loss" data-input="position_cost" checked> 亏</label></div></div>
+    <div class="form-row code-name-row">
+      <div><label>方向</label><select name="direction"><option value="long">多</option><option value="short">空</option></select></div>
+      <div><label>倍率 (空=1)</label><input name="leverage" type="number" step="any" min="1" placeholder="如 10，用于盈亏计算"></div>
+    </div>
     <div class="form-grid">
       <div class="form-row"><label>高价阈值 (空=不限)</label><div class="input-with-toggle"><input name="price_high" type="number" step="any"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="price_high" data-input="price_high" checked> 通知</label></div></div>
       <div class="form-row"><label>低价阈值 (空=不限)</label><div class="input-with-toggle"><input name="price_low" type="number" step="any"><label class="toggle-label"><input type="checkbox" class="alert-type-toggle" data-type="price_low" data-input="price_low" checked> 通知</label></div></div>
@@ -592,6 +598,6 @@
   </form>
 </dialog>
 
-<script src="/app.js?v=4"></script>
+<script src="/app.js?v=5"></script>
 </body>
 </html>

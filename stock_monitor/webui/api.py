@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..config import Config, ConfigStore, CryptoConfig, FundConfig, StockConfig
 from ..manager import MonitorManager
@@ -67,6 +67,8 @@ class CryptoIn(BaseModel):
     name: str
     nickname: str = ""
     position_cost: Optional[float] = None
+    direction: str = "long"
+    leverage: Optional[float] = None
     price_high: Optional[float] = None
     price_low: Optional[float] = None
     cooldown_minutes: int = 5
@@ -76,6 +78,13 @@ class CryptoIn(BaseModel):
     t_s_enabled: bool = True
     t_b_enabled: bool = True
     disabled_alerts: list[str] = Field(default_factory=list)
+
+    @field_validator("direction")
+    @classmethod
+    def _check_direction(cls, v: str) -> str:
+        if v not in ("long", "short"):
+            return "long"
+        return v
 
 
 class CryptoPatch(BaseModel):
@@ -134,6 +143,18 @@ def _mask_webhook(url: str) -> str:
     return url[:8] + "****" if len(url) > 12 else "****"
 
 
+def _apply_crypto_dir_lev(stock, base: dict):
+    """若 stock 是合约配置，填入方向/倍率到样例（股票/基金留空）。"""
+    direction = getattr(stock, "direction", None)
+    leverage = getattr(stock, "leverage", None)
+    if direction == "long":
+        base["direction"] = "多"
+    elif direction == "short":
+        base["direction"] = "空"
+    if leverage:
+        base["leverage"] = f"{int(leverage)}倍"
+
+
 def _build_template_sample(stock, alert_type: str) -> dict:
     """为模板预览生成样例占位符值"""
     base: dict = {
@@ -156,6 +177,8 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         "t_quantity": " 100手",
         "position_cost": "9.50",
         "profit_pct": "+5.26%",
+        "direction": "",
+        "leverage": "",
         "limit_price": "11.00",
         "sealed_lots": "100,000",
         "sealed_amount": "11,000.00",
@@ -184,6 +207,8 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         base["sealed_amount"] = ""
         base["seal_min_lots"] = ""
         base["seal_eta_seconds"] = ""
+        base["direction"] = ""
+        base["leverage"] = ""
 
     if alert_type == "price_high":
         threshold = stock.price_high if stock is not None and stock.price_high is not None else 10.0
@@ -251,6 +276,7 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         base["profit_pct"] = "+5.00%"
         base["daily_change"] = "+2.00%"
         base["threshold"] = ""
+        _apply_crypto_dir_lev(stock, base)
     elif alert_type == "loss":
         cost = stock.position_cost if stock is not None and stock.position_cost is not None else 9.5
         base["position_cost"] = f"{cost:.2f}"
@@ -258,6 +284,7 @@ def _build_template_sample(stock, alert_type: str) -> dict:
         base["profit_pct"] = "-5.00%"
         base["daily_change"] = "-2.00%"
         base["threshold"] = ""
+        _apply_crypto_dir_lev(stock, base)
     elif alert_type == "limit_up":
         base["price"] = "11.00"
         base["limit_price"] = "11.00"

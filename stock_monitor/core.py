@@ -782,6 +782,12 @@ class StockMonitor:
         def _fmt_price(v):
             return f"{v:.{precision}f}" if v is not None else ""
 
+        # 合约方向/倍率（仅合约有，股票/基金为空）
+        direction_val = stock_info.get('direction') if isinstance(stock_info, dict) else None
+        direction_label = {'long': '多', 'short': '空'}.get(direction_val, '') if direction_val else ''
+        leverage_val = stock_info.get('leverage') if isinstance(stock_info, dict) else None
+        leverage_str = f"{int(leverage_val)}倍" if leverage_val else ''
+
         message = template.format(
             name=name_val,
             nickname=nickname_val,
@@ -807,6 +813,8 @@ class StockMonitor:
             seal_eta_seconds=str(seal_eta_seconds) if seal_eta_seconds is not None else "",
             position_cost=_fmt_price(position_cost),
             profit_pct=f"{profit_pct:+.2f}%" if profit_pct is not None else "",
+            direction=direction_label,
+            leverage=leverage_str,
         )
 
         message += '.'
@@ -1054,8 +1062,26 @@ class StockMonitor:
                     self.price_low_alerted_abs[stock_code].clear()
                     alert_status['_low_init'] = False
     
+    def _profit_loss_params(self, stock_code: str):
+        """返回 (direction_sign, leverage) 用于盈亏计算。
+
+        股票/基金：方向 +1，杠杆 1。
+        合约：多 +1 / 空 -1，杠杆取配置 leverage（空=1）。
+        """
+        config = self.stocks.get(stock_code, {})
+        if stock_code in self._crypto_codes:
+            sign = -1 if config.get('direction') == 'short' else 1
+            lev = config.get('leverage')
+            lev = float(lev) if lev else 1.0
+            return sign, lev
+        return 1, 1
+
     def check_profit_loss(self, stock_code: str, current_price: float):
-        """检查盈亏：现价 vs 持仓成本，跨过成本线时通知一次"""
+        """检查盈亏：现价 vs 持仓成本，跨过成本线时通知一次。
+
+        股票/基金：现价 > 成本 即盈利。
+        合约：多(空)方向时现价 >(<) 成本 为盈利；盈亏% = 价格变动% × 方向符号 × 杠杆。
+        """
         config = self.stocks[stock_code]
         position_cost = config.get('position_cost')
         if position_cost is None or position_cost <= 0:
@@ -1066,9 +1092,13 @@ class StockMonitor:
         daily_change = None
         if yesterday > 0:
             daily_change = (current_price - yesterday) / yesterday * 100
-        profit_pct = (current_price - position_cost) / position_cost * 100
 
-        if current_price > position_cost:
+        sign, leverage = self._profit_loss_params(stock_code)
+        # 实际持仓盈亏百分比（含方向与杠杆）
+        profit_pct = (current_price - position_cost) / position_cost * 100 * sign * leverage
+        is_profit = profit_pct > 0
+
+        if is_profit:
             if not self._profit_alerted.get(stock_code, False):
                 if 'profit' not in disabled and self.check_cooldown(stock_code, 'profit'):
                     self.send_dingding_notification(

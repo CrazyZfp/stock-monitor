@@ -28,8 +28,8 @@ DEFAULT_TEMPLATES = {
     "surge_down": ["⏬️ {name},{speed_change}({time})"],
     "retracement": ["🔻 {name} 回撤 {retracement}（峰值 {peak_price}，当前 {price}）"],
     "bounce": ["🟢 {name} 反弹 {bounce}（谷值 {valley_price}，当前 {price}）"],
-    "profit": ["🟢 {name} 盈利 {profit_pct}（成本 {position_cost}，当前 {price}）"],
-    "loss": ["🔴 {name} 亏损 {profit_pct}（成本 {position_cost}，当前 {price}）"],
+    "profit": ["🟢 {name} {direction}{leverage} 盈利 {profit_pct}（成本 {position_cost}，当前 {price}）"],
+    "loss": ["🔴 {name} {direction}{leverage} 亏损 {profit_pct}（成本 {position_cost}，当前 {price}）"],
     "t_sell": ["🔻 {name} 做T可买回：{t_price}→{price}（跌{t_threshold}%）{t_quantity}"],
     "t_buy": ["🟢 {name} 做T可卖出：{t_price}→{price}（涨{t_threshold}%）{t_quantity}"],
     "limit_up": ["🔴 {name} 涨停 封单{sealed_lots}手 {sealed_amount}万元"],
@@ -204,6 +204,8 @@ class CryptoConfig:
     name: str
     nickname: str = ""
     position_cost: Optional[float] = None
+    direction: str = "long"   # "long"(多) / "short"(空)
+    leverage: Optional[float] = None   # 倍率，空=1
     price_high: Optional[float] = None
     price_low: Optional[float] = None
     cooldown_minutes: int = 5
@@ -231,11 +233,16 @@ class CryptoConfig:
                 except ValueError:
                     ev["created_at"] = None
             t_events.append(ev)
+        direction = d.get("direction", "long")
+        if direction not in ("long", "short"):
+            direction = "long"
         return cls(
             code=d["code"],
             name=d["name"],
             nickname=d.get("nickname", ""),
             position_cost=d.get("position_cost"),
+            direction=direction,
+            leverage=d.get("leverage"),
             price_high=d.get("price_high"),
             price_low=d.get("price_low"),
             cooldown_minutes=int(d.get("cooldown_minutes", 5)),

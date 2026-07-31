@@ -67,12 +67,14 @@ function fmtAmountWan(v) {
   return w.toFixed(2);
 }
 
-function profitLossHtml(cost, price) {
+function profitLossHtml(cost, price, direction, leverage) {
   if (cost == null || cost <= 0 || price == null) return '<span class="muted">—</span>';
-  const pct = (price - cost) / cost * 100;
-  const cls = price > cost ? 'quote-up' : price < cost ? 'quote-down' : 'quote-flat';
-  const sign = pct > 0 ? '+' : '';
-  return `<div class="${cls}">${sign}${pct.toFixed(2)}%</div>`;
+  const sign = direction === 'short' ? -1 : 1;
+  const lev = leverage || 1;
+  const pct = (price - cost) / cost * 100 * sign * lev;
+  const cls = pct > 0 ? 'quote-up' : pct < 0 ? 'quote-down' : 'quote-flat';
+  const s = pct > 0 ? '+' : '';
+  return `<div class="${cls}">${s}${pct.toFixed(2)}%</div>`;
 }
 
 function renderLimit(q) {
@@ -395,7 +397,7 @@ function renderCryptos() {
         <div class="quote-price">${fmtPriceP(q.price, prec)}</div>
         <div class="quote-change">${fmtChange(q.change_percent)}</div>
       </td>
-      <td>${profitLossHtml(c.position_cost, q.price)}</td>
+      <td>${profitLossHtml(c.position_cost, q.price, c.direction, c.leverage)}</td>
       <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
       <td><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''} data-code="${escapeHtml(c.code)}" class="toggle-crypto"><span class="slider"></span></label></td>
       <td>
@@ -614,6 +616,8 @@ $('#crypto-form').addEventListener('submit', async (e) => {
     name: form.elements.name.value.trim(),
     nickname: form.elements.nickname.value.trim(),
     position_cost: numOrNull(form.elements.position_cost.value),
+    direction: form.elements.direction.value,
+    leverage: numOrNull(form.elements.leverage.value),
     price_high: numOrNull(form.elements.price_high.value),
     price_low: numOrNull(form.elements.price_low.value),
     cooldown_minutes: Number(form.elements.cooldown_minutes.value),

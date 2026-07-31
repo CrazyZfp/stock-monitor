@@ -617,6 +617,8 @@ class MonitorManager:
             "name": c.name,
             "nickname": c.nickname,
             "position_cost": c.position_cost,
+            "direction": c.direction,
+            "leverage": c.leverage,
             "price_high": c.price_high,
             "price_low": c.price_low,
             "cooldown_minutes": c.cooldown_minutes,
