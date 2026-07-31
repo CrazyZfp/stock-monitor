@@ -768,10 +768,10 @@ class MonitorManager:
             try:
                 has_crypto = self.monitor is not None and bool(self.monitor._crypto_codes)
                 sleep_seconds = StockMonitor._seconds_until_next_check(self.interval_seconds)
-                # 有合约品种时，休眠不超过一个轮询周期
+                is_trading_window = sleep_seconds == self.interval_seconds
+                # 有合约品种时，休眠不超过一个轮询周期（合约 24/7）
                 if has_crypto:
                     sleep_seconds = self.interval_seconds
-                is_trading_window = sleep_seconds == self.interval_seconds
 
                 if self.monitor is not None and self.monitor.dingding_webhook and (is_trading_window or has_crypto):
                     cfg = self.store.get()
