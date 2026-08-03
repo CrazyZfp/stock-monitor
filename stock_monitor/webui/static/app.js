@@ -72,7 +72,7 @@ function profitLossHtml(cost, price, direction, leverage) {
   const sign = direction === 'short' ? -1 : 1;
   const lev = leverage || 1;
   const pct = (price - cost) / cost * 100 * sign * lev;
-  const cls = pct > 0 ? 'quote-up' : pct < 0 ? 'quote-down' : 'quote-flat';
+  const cls = pct > 0 ? 'profit-up' : pct < 0 ? 'profit-down' : 'profit-flat';
   const s = pct > 0 ? '+' : '';
   return `<div class="${cls}">${s}${pct.toFixed(2)}%</div>`;
 }

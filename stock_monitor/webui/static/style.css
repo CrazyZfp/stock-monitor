@@ -54,6 +54,11 @@ td.quote-up   { color: #dc2626; font-weight: 600; }
 td.quote-down { color: #10b981; font-weight: 600; }
 td.quote-flat { color: #6b7280; }
 
+/* 盈亏单元格：绿色盈利，红色亏损 */
+.profit-up   { color: #10b981; font-weight: 600; }
+.profit-down { color: #dc2626; font-weight: 600; }
+.profit-flat { color: #6b7280; }
+
 /* 涨跌停封单单元格（A 股：红涨绿跌） */
 td.limit-cell { font-size: 12px; white-space: nowrap; }
 td.limit-up .limit-tag { color: #dc2626; font-weight: 600; }
