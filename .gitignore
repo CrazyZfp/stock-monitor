@@ -21,6 +21,9 @@ AGENTS.md
 # Test artifacts
 .pytest_cache/
 
+# Logs
+logs/
+
 # Deploy artifacts
 target/
 
