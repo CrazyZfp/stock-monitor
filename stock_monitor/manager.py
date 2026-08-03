@@ -36,6 +36,7 @@ class MonitorManager:
         self.monitor: Optional[StockMonitor] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
+        self._wakeup = threading.Event()
         # 运行状态
         self.stats = {
             "started_at": None,
@@ -71,6 +72,7 @@ class MonitorManager:
             self._running = False
             if self.monitor is not None:
                 self.monitor.stop()
+        self._wakeup.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
             self._thread = None
@@ -641,6 +643,7 @@ class MonitorManager:
             self._remove_crypto_runtime(code)
             if target is not None and target.enabled:
                 self.monitor.add_crypto(code, self._crypto_to_dict(target))
+        self._wakeup.set()
 
     def _remove_crypto_runtime(self, code: str):
         with self._lock:
@@ -837,7 +840,9 @@ class MonitorManager:
                 for _ in range(int(sleep_seconds)):
                     if not self._running:
                         break
-                    time.sleep(1)
+                    if self._wakeup.wait(timeout=1):
+                        self._wakeup.clear()
+                        break
             except Exception as e:
                 logger.error(f"监控循环异常: {e}", exc_info=True)
                 self.stats["last_error"] = str(e)
