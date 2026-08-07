@@ -216,7 +216,7 @@ class MonitorManager:
     def update_templates(self, templates: dict):
         with self._lock:
             cfg = self.store.get()
-            cfg.disguise_templates = templates
+            cfg.disguise_templates.update(templates)
             self.store.save(cfg)
         self._apply_runtime_changes()
 

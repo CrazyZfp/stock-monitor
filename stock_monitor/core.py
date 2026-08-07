@@ -858,7 +858,18 @@ class StockMonitor:
             )
             
             if response.status_code == 200:
-                logger.info(f"钉钉通知发送成功: {message[:50]}...")
+                errcode = 0
+                errmsg = ""
+                try:
+                    resp = response.json()
+                    errcode = resp.get("errcode", 0)
+                    errmsg = resp.get("errmsg", "")
+                except ValueError:
+                    pass
+                if errcode == 0:
+                    logger.info(f"钉钉通知发送成功: {message[:50]}...")
+                else:
+                    logger.error(f"钉钉通知被拒: errcode={errcode} errmsg={errmsg} 消息: {message[:50]}...")
             else:
                 logger.error(f"钉钉通知发送失败: {response.status_code}")
                 

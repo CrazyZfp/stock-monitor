@@ -40,6 +40,11 @@ def capture(m: StockMonitor):
     return msgs
 
 
+@pytest.fixture
+def m() -> StockMonitor:
+    return make_monitor()
+
+
 # ---------- add_crypto 状态初始化 ----------
 
 class TestAddCrypto:
@@ -298,3 +303,38 @@ class TestCryptoAPI:
         client.post("/api/cryptos", json={"code": "fapi:BTCUSDT", "name": "BTC"})
         export = client.get("/api/export?scope=cryptos").json()
         assert "cryptos" in export
+
+
+# ---------- _do_send 钉钉响应 errcode 处理 ----------
+
+class TestDoSend:
+    """钉钉 HTTP 200 但 body errcode!=0 时（如关键词不匹配）应记为失败，不得静默吞掉"""
+
+    def test_success_when_errcode_zero(self, m: StockMonitor, caplog):
+        with patch("stock_monitor.core.requests.post") as mock_post:
+            resp = MagicMock(status_code=200)
+            resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
+            mock_post.return_value = resp
+            with caplog.at_level("INFO", logger="stock_monitor.core"):
+                m._do_send("test message")
+        assert "发送成功" in caplog.text
+        assert "被拒" not in caplog.text
+
+    def test_rejected_when_errcode_nonzero(self, m: StockMonitor, caplog):
+        with patch("stock_monitor.core.requests.post") as mock_post:
+            resp = MagicMock(status_code=200)
+            resp.json.return_value = {"errcode": 310000, "errmsg": "关键词不匹配"}
+            mock_post.return_value = resp
+            with caplog.at_level("ERROR", logger="stock_monitor.core"):
+                m._do_send("test message")
+        assert "发送成功" not in caplog.text
+        assert "errcode=310000" in caplog.text
+        assert "关键词不匹配" in caplog.text
+
+    def test_failed_on_http_error(self, m: StockMonitor, caplog):
+        with patch("stock_monitor.core.requests.post") as mock_post:
+            resp = MagicMock(status_code=500)
+            mock_post.return_value = resp
+            with caplog.at_level("ERROR", logger="stock_monitor.core"):
+                m._do_send("test message")
+        assert "发送失败: 500" in caplog.text

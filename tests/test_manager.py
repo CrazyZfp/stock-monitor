@@ -57,6 +57,14 @@ class TestMonitorManagerCRUD:
         mgr.update_templates({"price_high": ["TEST {name}"]})
         assert mgr.get_config().disguise_templates["price_high"] == ["TEST {name}"]
 
+    def test_update_templates_merge_preserves_other_types(self, mgr: MonitorManager):
+        """部分模板更新不得覆盖未提交的类型（如 profit/loss），防止模板被静默丢弃"""
+        mgr.update_templates({"price_high": ["TEST {name}"]})
+        templates = mgr.get_config().disguise_templates
+        assert templates["price_high"] == ["TEST {name}"]
+        assert templates["profit"]
+        assert templates["loss"]
+
     def test_replace_config(self, mgr: MonitorManager):
         """整体替换配置后应完全生效"""
         from stock_monitor.config import Config

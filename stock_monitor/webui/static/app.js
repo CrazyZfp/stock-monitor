@@ -1063,7 +1063,7 @@ $('#templates-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const templates = {};
-  for (const key of ['price_high', 'price_low', 'daily_up', 'daily_down', 'surge_up', 'surge_down', 'retracement', 'bounce', 't_sell', 't_buy', 'limit_up', 'limit_up_broken', 'limit_up_low_seal', 'limit_up_exhaust', 'limit_down', 'limit_down_broken', 'limit_down_low_seal', 'limit_down_exhaust']) {
+  for (const key of ['price_high', 'price_low', 'daily_up', 'daily_down', 'surge_up', 'surge_down', 'retracement', 'bounce', 't_sell', 't_buy', 'limit_up', 'limit_up_broken', 'limit_up_low_seal', 'limit_up_exhaust', 'limit_down', 'limit_down_broken', 'limit_down_low_seal', 'limit_down_exhaust', 'profit', 'loss']) {
     templates[key] = form.elements[key].value.split('\n').filter(Boolean);
   }
   try {
