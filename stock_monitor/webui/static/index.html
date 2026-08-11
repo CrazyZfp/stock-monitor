@@ -116,7 +116,7 @@
   <section id="tab-templates" class="tab-content">
     <div class="section-head">
       <h3 class="section-title">通知模板</h3>
-      <p class="hint">可写多行，每行一个模板随机选用；留空该类型则不发送对应通知。不存在的占位符会导致保存失败。</p>
+      <p class="hint">「全局模板」对所有市场生效；各市场模板留空则继承全局，填入内容则该市场使用专属模板覆盖全局。可写多行，每行一个模板随机选用；不存在的占位符会导致保存失败。</p>
       <details class="placeholder-fold">
         <summary class="placeholder-summary">查看占位符说明</summary>
         <div class="placeholder-table-wrap">
@@ -155,6 +155,7 @@
       </details>
     </div>
 
+    <div id="global-template-panel">
     <form id="templates-form">
       <section class="cfg-group">
         <h4 class="group-title">价格与当日涨跌</h4>
@@ -284,17 +285,15 @@
         <button class="btn btn-primary" type="submit">保存全局模板</button>
       </div>
     </form>
-
-    <div class="section-head">
-      <h3 class="section-title">按市场覆盖模板</h3>
-      <p class="hint">留空某类型则继承全局基础模板；填入内容则该市场使用专属模板覆盖全局。</p>
     </div>
+
     <div class="market-tabs" id="market-tabs">
-      <button class="market-tab active" data-market="stock">股票</button>
+      <button class="market-tab active" data-market="global">全局模板</button>
+      <button class="market-tab" data-market="stock">股票</button>
       <button class="market-tab" data-market="fund">基金</button>
       <button class="market-tab" data-market="crypto">合约</button>
     </div>
-    <form id="market-templates-form">
+    <form id="market-templates-form" hidden>
       <div id="market-templates-fields"></div>
       <div class="actions">
         <button class="btn btn-primary" type="submit">保存市场模板</button>
@@ -683,6 +682,6 @@
 </dialog>
 
 
-<script src="/app.js?v=8"></script>
+<script src="/app.js?v=9"></script>
 </body>
 </html>

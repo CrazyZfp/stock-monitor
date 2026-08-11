@@ -1067,7 +1067,7 @@ let marketTemplatesData = { stock: {}, fund: {}, crypto: {} };
 function buildMarketFields() {
   const container = $('#market-templates-fields');
   container.innerHTML = MARKETS.map(mkt => `
-    <div class="market-fields" data-market="${mkt}" ${mkt === currentMarket ? '' : 'hidden'}>
+    <div class="market-fields" data-market="${mkt}" hidden>
       ${TEMPLATE_GROUPS.map(([gname, types]) => `
         <section class="cfg-group">
           <h4 class="group-title">${gname}</h4>
@@ -1123,20 +1123,25 @@ $('#templates-form').addEventListener('submit', async (e) => {
   } catch (err) { toast('保存失败: ' + err.message, 'error'); }
 });
 
-// 市场模板表单
+// 模板二级 tab（全局 / 股票 / 基金 / 合约）
 $('#market-tabs').addEventListener('click', (e) => {
   const btn = e.target.closest('.market-tab');
   if (!btn) return;
-  currentMarket = btn.dataset.market;
-  $$('.market-tab').forEach(b => b.classList.toggle('active', b.dataset.market === currentMarket));
+  const mkt = btn.dataset.market;
+  currentMarket = mkt;
+  $$('#market-tabs .market-tab').forEach(b => b.classList.toggle('active', b.dataset.market === mkt));
+  const isGlobal = mkt === 'global';
+  $('#global-template-panel').hidden = !isGlobal;
+  $('#market-templates-form').hidden = isGlobal;
   $$('#market-templates-fields .market-fields').forEach(div => {
-    div.hidden = div.dataset.market !== currentMarket;
+    div.hidden = div.dataset.market !== mkt;
   });
-  fillMarketForm();
+  if (!isGlobal) fillMarketForm();
 });
 
 $('#market-templates-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (currentMarket === 'global') return;
   const active = $(`#market-templates-fields .market-fields[data-market="${currentMarket}"]`);
   const templates = {};
   for (const type of TEMPLATE_TYPES) {
