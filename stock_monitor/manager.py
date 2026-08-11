@@ -203,6 +203,7 @@ class MonitorManager:
         self._apply_runtime_changes()
 
     def update_webhook(self, webhook: str, at_mobiles: list[str] | None = None, at_user_ids: list[str] | None = None):
+        """更新钉钉配置。保存后自动开启钉钉通道（不改动模式）。"""
         with self._lock:
             cfg = self.store.get()
             cfg.dingding_webhook = webhook
@@ -210,13 +211,69 @@ class MonitorManager:
                 cfg.at_mobiles = list(at_mobiles)
             if at_user_ids is not None:
                 cfg.at_user_ids = list(at_user_ids)
+            if webhook:
+                cfg.notify_channels["dingding"] = True
             self.store.save(cfg)
         self._apply_runtime_changes()
 
-    def update_templates(self, templates: dict):
+    def update_email_config(self, *, smtp_host: str, smtp_port: int, username: str,
+                            password: str, from_addr: str = "", to_addrs: list[str],
+                            use_ssl: bool = True):
+        """更新邮箱通知配置。保存后自动开启邮箱通道（不改动模式）。"""
         with self._lock:
             cfg = self.store.get()
-            cfg.disguise_templates.update(templates)
+            cfg.email_smtp_host = smtp_host
+            cfg.email_smtp_port = smtp_port
+            cfg.email_username = username
+            cfg.email_password = password
+            cfg.email_from_addr = from_addr or username
+            cfg.email_to_addrs = list(to_addrs)
+            cfg.email_use_ssl = use_ssl
+            if smtp_host and username and to_addrs:
+                cfg.notify_channels["email"] = True
+            self.store.save(cfg)
+        self._apply_runtime_changes()
+
+    def update_notify_settings(self, *, mode: str | None = None,
+                               channels: dict[str, bool] | None = None,
+                               priority: list[str] | None = None):
+        """更新通知模式 / 通道开关 / 优先级。任一参数为 None 表示不更新。"""
+        with self._lock:
+            cfg = self.store.get()
+            if mode is not None:
+                if mode not in ("multi", "single"):
+                    raise ValueError(f"未知通知模式: {mode}")
+                cfg.notify_mode = mode
+            if channels is not None:
+                for ch in ("dingding", "email"):
+                    if ch in channels:
+                        cfg.notify_channels[ch] = bool(channels[ch])
+            if priority is not None:
+                # 校验：必须包含全部已知通道，不含未知通道
+                valid = [p for p in priority if p in ("dingding", "email")]
+                for ch in ("dingding", "email"):
+                    if ch not in valid:
+                        valid.append(ch)
+                cfg.notify_priority = valid
+            self.store.save(cfg)
+        self._apply_runtime_changes()
+
+    def update_templates(self, global_templates: dict | None = None, market_templates: dict | None = None):
+        """更新通知模板（全局基础 + 按市场覆盖）。任一参数为 None 表示不更新该部分。"""
+        with self._lock:
+            cfg = self.store.get()
+            if global_templates:
+                cfg.disguise_templates.update({
+                    k: list(v) for k, v in global_templates.items() if isinstance(v, list)
+                })
+            if market_templates:
+                for mkt, tmap in market_templates.items():
+                    if not isinstance(tmap, dict):
+                        continue
+                    cur = cfg.market_templates.setdefault(mkt, {})
+                    for at, t in tmap.items():
+                        if isinstance(t, list):
+                            cur[at] = list(t)
             self.store.save(cfg)
         self._apply_runtime_changes()
 
@@ -238,10 +295,20 @@ class MonitorManager:
             result["cryptos"] = [c.to_dict() for c in cfg.cryptos]
         if "templates" in scope:
             result["disguise_templates"] = cfg.disguise_templates
+            result["market_templates"] = cfg.market_templates
         if "webhook" in scope:
+            result["notify_mode"] = cfg.notify_mode
+            result["notify_channels"] = dict(cfg.notify_channels)
+            result["notify_priority"] = list(cfg.notify_priority)
             result["dingding_webhook"] = cfg.dingding_webhook
             result["at_mobiles"] = list(cfg.at_mobiles)
             result["at_user_ids"] = list(cfg.at_user_ids)
+            result["email_smtp_host"] = cfg.email_smtp_host
+            result["email_smtp_port"] = cfg.email_smtp_port
+            result["email_username"] = cfg.email_username
+            result["email_from_addr"] = cfg.email_from_addr
+            result["email_to_addrs"] = list(cfg.email_to_addrs)
+            result["email_use_ssl"] = cfg.email_use_ssl
         if "other" in scope:
             result["poll_interval_seconds"] = cfg.poll_interval_seconds
         return result
@@ -258,13 +325,44 @@ class MonitorManager:
                 cfg.cryptos = [CryptoConfig.from_dict(c) for c in data["cryptos"]]
             if "templates" in scope and "disguise_templates" in data:
                 cfg.disguise_templates = data["disguise_templates"]
+            if "templates" in scope and "market_templates" in data:
+                cfg.market_templates = {
+                    mkt: {at: list(t) for at, t in tmap.items() if isinstance(t, list)}
+                    for mkt, tmap in data["market_templates"].items()
+                }
             if "webhook" in scope:
+                if "notify_mode" in data:
+                    cfg.notify_mode = data["notify_mode"] if data["notify_mode"] in ("multi", "single") else cfg.notify_mode
+                if "notify_channels" in data:
+                    for ch in ("dingding", "email"):
+                        if ch in data["notify_channels"]:
+                            cfg.notify_channels[ch] = bool(data["notify_channels"][ch])
+                if "notify_priority" in data:
+                    valid = [p for p in data["notify_priority"] if p in ("dingding", "email")]
+                    for ch in ("dingding", "email"):
+                        if ch not in valid:
+                            valid.append(ch)
+                    cfg.notify_priority = valid
                 if "dingding_webhook" in data:
                     cfg.dingding_webhook = data["dingding_webhook"]
                 if "at_mobiles" in data:
                     cfg.at_mobiles = list(data["at_mobiles"])
                 if "at_user_ids" in data:
                     cfg.at_user_ids = list(data["at_user_ids"])
+                if "email_smtp_host" in data:
+                    cfg.email_smtp_host = data["email_smtp_host"]
+                if "email_smtp_port" in data:
+                    cfg.email_smtp_port = int(data["email_smtp_port"])
+                if "email_username" in data:
+                    cfg.email_username = data["email_username"]
+                if "email_password" in data:
+                    cfg.email_password = data["email_password"]
+                if "email_from_addr" in data:
+                    cfg.email_from_addr = data["email_from_addr"]
+                if "email_to_addrs" in data:
+                    cfg.email_to_addrs = list(data["email_to_addrs"])
+                if "email_use_ssl" in data:
+                    cfg.email_use_ssl = bool(data["email_use_ssl"])
             if "other" in scope and "poll_interval_seconds" in data:
                 cfg.poll_interval_seconds = int(data["poll_interval_seconds"])
             self.store.save(cfg)
@@ -553,9 +651,23 @@ class MonitorManager:
     # ===== 内部 =====
 
     def _build_monitor(self, cfg: Config) -> Optional[StockMonitor]:
-        if not cfg.dingding_webhook:
-            logger.warning("dingding_webhook 未配置，监控启动后无法发送通知")
-        m = StockMonitor(cfg.dingding_webhook, at_mobiles=cfg.at_mobiles, at_user_ids=cfg.at_user_ids)
+        if not any(cfg.channel_ready(ch) for ch in cfg.notify_priority):
+            logger.warning("无可用通知通道，监控启动后无法发送通知")
+        m = StockMonitor(
+            cfg.dingding_webhook,
+            at_mobiles=cfg.at_mobiles,
+            at_user_ids=cfg.at_user_ids,
+            notify_mode=cfg.notify_mode,
+            notify_channels=dict(cfg.notify_channels),
+            notify_priority=list(cfg.notify_priority),
+            email_smtp_host=cfg.email_smtp_host,
+            email_smtp_port=cfg.email_smtp_port,
+            email_username=cfg.email_username,
+            email_password=cfg.email_password,
+            email_from_addr=cfg.email_from_addr,
+            email_to_addrs=list(cfg.email_to_addrs),
+            email_use_ssl=cfg.email_use_ssl,
+        )
         for s in cfg.stocks:
             if not s.enabled:
                 continue
@@ -572,6 +684,11 @@ class MonitorManager:
         if cfg.disguise_templates:
             m.disguise_templates = {
                 k: list(v) for k, v in cfg.disguise_templates.items()
+            }
+        if cfg.market_templates:
+            m.market_templates = {
+                mkt: {at: list(t) for at, t in tmap.items()}
+                for mkt, tmap in cfg.market_templates.items()
             }
         # 拉取合约精度缓存
         if cfg.cryptos:
@@ -724,14 +841,25 @@ class MonitorManager:
             self.monitor.t_events.pop(code, None)
 
     def _apply_runtime_changes(self):
-        """webhook/templates/轮询间隔变化时更新 monitor 字段（不重建实例）"""
+        """通知通道/模板/轮询间隔变化时更新 monitor 字段（不重建实例）"""
         with self._lock:
             if self.monitor is None:
                 return
             cfg = self.store.get()
+            # 通知模式 / 通道开关 / 优先级 / 各通道配置
+            self.monitor.notify_mode = cfg.notify_mode
+            self.monitor.notify_channels = dict(cfg.notify_channels)
+            self.monitor.notify_priority = list(cfg.notify_priority)
             self.monitor.dingding_webhook = cfg.dingding_webhook
             self.monitor.at_mobiles = list(cfg.at_mobiles)
             self.monitor.at_user_ids = list(cfg.at_user_ids)
+            self.monitor.email_smtp_host = cfg.email_smtp_host
+            self.monitor.email_smtp_port = cfg.email_smtp_port
+            self.monitor.email_username = cfg.email_username
+            self.monitor.email_password = cfg.email_password
+            self.monitor.email_from_addr = cfg.email_from_addr or cfg.email_username
+            self.monitor.email_to_addrs = list(cfg.email_to_addrs)
+            self.monitor.email_use_ssl = cfg.email_use_ssl
             self.interval_seconds = cfg.poll_interval_seconds
             self.monitor._limit_exhaust_seconds = cfg.limit_seal_exhaust_seconds
             self.monitor._limit_exhaust_samples = cfg.limit_seal_exhaust_samples
@@ -739,6 +867,10 @@ class MonitorManager:
                 self.monitor.disguise_templates = {
                     k: list(v) for k, v in cfg.disguise_templates.items()
                 }
+            self.monitor.market_templates = {
+                mkt: {at: list(t) for at, t in tmap.items()}
+                for mkt, tmap in cfg.market_templates.items()
+            }
             enabled_stock_codes = {s.code for s in cfg.stocks if s.enabled}
             for code in list(self.monitor.stocks.keys()):
                 if code not in enabled_stock_codes and cfg.find_fund(code) is None and cfg.find_crypto(code) is None:

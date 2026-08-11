@@ -100,7 +100,8 @@ class WebhookIn(BaseModel):
 
 
 class TemplatesIn(BaseModel):
-    templates: dict[str, list[str]]
+    global_templates: dict[str, list[str]] = Field(default_factory=dict)
+    market_templates: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
 
 
 class TestNotifyIn(BaseModel):
@@ -111,6 +112,23 @@ class TemplatePreviewIn(BaseModel):
     template: str
     alert_type: str
     stock_code: Optional[str] = None
+    market: Optional[str] = None
+
+
+class EmailConfigIn(BaseModel):
+    smtp_host: str = ""
+    smtp_port: int = 465
+    username: str = ""
+    password: str = ""
+    from_addr: str = ""
+    to_addrs: list[str] = Field(default_factory=list)
+    use_ssl: bool = True
+
+
+class NotifySettingsIn(BaseModel):
+    mode: Optional[str] = None
+    channels: Optional[dict[str, bool]] = None
+    priority: Optional[list[str]] = None
 
 
 class TEventIn(BaseModel):
@@ -345,9 +363,13 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     def get_config():
         cfg = manager.get_config()
         return {
+            "notify_mode": cfg.notify_mode,
+            "notify_channels": dict(cfg.notify_channels),
+            "notify_priority": list(cfg.notify_priority),
             "dingding_webhook": _mask_webhook(cfg.dingding_webhook),
             "dingding_webhook_set": bool(cfg.dingding_webhook),
             "disguise_templates": cfg.disguise_templates,
+            "market_templates": cfg.market_templates,
             "stocks": [s.to_dict() for s in cfg.stocks],
         }
 
@@ -599,11 +621,15 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     # ----- 模板 -----
     @router.get("/templates")
     def get_templates():
-        return manager.get_config().disguise_templates
+        cfg = manager.get_config()
+        return {
+            "global": cfg.disguise_templates,
+            "market": cfg.market_templates,
+        }
 
     @router.put("/templates")
     def put_templates(payload: TemplatesIn):
-        manager.update_templates(payload.templates)
+        manager.update_templates(payload.global_templates, payload.market_templates)
         return {"ok": True}
 
     @router.post("/templates/preview")
@@ -612,14 +638,25 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
         if payload.alert_type not in VALID_TYPES:
             raise HTTPException(400, f"未知 alert_type: {payload.alert_type}")
         cfg = manager.get_config()
+        market = payload.market
+        if market not in (None, "stock", "fund", "crypto"):
+            raise HTTPException(400, f"未知 market: {market}")
         stock = None
         if payload.stock_code:
-            stock = cfg.find_stock(payload.stock_code)
+            stock = cfg.find_stock(payload.stock_code) or cfg.find_fund(payload.stock_code) or cfg.find_crypto(payload.stock_code)
         if stock is None:
-            for s in cfg.stocks:
+            # 预览时按 market 优先取该类型的首个标的
+            pools = {"stock": cfg.stocks, "fund": cfg.funds, "crypto": cfg.cryptos}
+            pool = pools.get(market, cfg.stocks) if market else cfg.stocks
+            for s in pool:
                 if s.enabled:
                     stock = s
                     break
+            if stock is None:
+                for s in cfg.stocks:
+                    if s.enabled:
+                        stock = s
+                        break
         sample = _build_template_sample(stock, payload.alert_type)
         try:
             rendered = payload.template.format(**sample)
@@ -631,6 +668,30 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
             "stock_code": stock.code if stock else None,
             "stock_name": stock.name if stock else None,
         }
+
+    # ----- 通知设置（模式 / 通道开关 / 优先级）-----
+    @router.get("/settings/notify")
+    def get_notify_settings():
+        cfg = manager.get_config()
+        return {
+            "mode": cfg.notify_mode,
+            "channels": dict(cfg.notify_channels),
+            "priority": list(cfg.notify_priority),
+            "dingding_ready": cfg.channel_ready("dingding"),
+            "email_ready": cfg.channel_ready("email"),
+        }
+
+    @router.put("/settings/notify")
+    def put_notify_settings(payload: NotifySettingsIn):
+        try:
+            manager.update_notify_settings(
+                mode=payload.mode,
+                channels=payload.channels,
+                priority=payload.priority,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True}
 
     # ----- Webhook -----
     @router.get("/settings/webhook")
@@ -646,6 +707,33 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     @router.put("/settings/webhook")
     def put_webhook(payload: WebhookIn):
         manager.update_webhook(payload.webhook, at_mobiles=payload.at_mobiles, at_user_ids=payload.at_user_ids)
+        return {"ok": True}
+
+    # ----- 邮箱 -----
+    @router.get("/settings/email")
+    def get_email():
+        cfg = manager.get_config()
+        return {
+            "smtp_host": cfg.email_smtp_host,
+            "smtp_port": cfg.email_smtp_port,
+            "username": cfg.email_username,
+            "password_set": bool(cfg.email_password),
+            "from_addr": cfg.email_from_addr,
+            "to_addrs": list(cfg.email_to_addrs),
+            "use_ssl": cfg.email_use_ssl,
+        }
+
+    @router.put("/settings/email")
+    def put_email(payload: EmailConfigIn):
+        manager.update_email_config(
+            smtp_host=payload.smtp_host,
+            smtp_port=payload.smtp_port,
+            username=payload.username,
+            password=payload.password,
+            from_addr=payload.from_addr,
+            to_addrs=payload.to_addrs,
+            use_ssl=payload.use_ssl,
+        )
         return {"ok": True}
 
     # ----- 状态 -----
@@ -680,7 +768,7 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     @router.post("/actions/test-notify")
     def test_notify(payload: TestNotifyIn = TestNotifyIn()):
         if not manager.test_notify(payload.message):
-            raise HTTPException(400, "监控器未启动或 webhook 未配置")
+            raise HTTPException(400, "监控器未启动或通知通道未配置")
         return {"ok": True}
 
     @router.post("/actions/sync-holidays")

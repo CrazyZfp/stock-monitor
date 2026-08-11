@@ -259,29 +259,69 @@ class CryptoConfig:
         )
 
 
+# ========== 通知市场 ==========
+# 模板按市场区分：stock / fund / crypto；未配置的 alert_type 回退到全局基础模板
+TEMPLATE_MARKETS = ("stock", "fund", "crypto")
+
+# 通知模式
+NOTIFY_MODES = ("multi", "single")
+# 通知通道
+NOTIFY_CHANNELS = ("dingding", "email")
+# 通道默认优先级（single 模式按此顺序回退）
+DEFAULT_NOTIFY_PRIORITY = ["dingding", "email"]
+
+
 @dataclass
 class Config:
+    # ===== 通知通道 =====
+    notify_mode: str = "single"               # "multi"(全发) | "single"(优先级回退)
+    notify_channels: dict[str, bool] = field(default_factory=lambda: {"dingding": True, "email": False})
+    notify_priority: list[str] = field(default_factory=lambda: list(DEFAULT_NOTIFY_PRIORITY))
+    # 钉钉
     dingding_webhook: str = ""
     at_mobiles: list[str] = field(default_factory=list)
     at_user_ids: list[str] = field(default_factory=list)
+    # 邮箱（SMTP）
+    email_smtp_host: str = ""                  # 如 smtp.qq.com
+    email_smtp_port: int = 465                 # 465→SSL, 587→STARTTLS
+    email_username: str = ""                   # 发件邮箱
+    email_password: str = ""                   # SMTP 授权码
+    email_from_addr: str = ""                  # 发件地址，默认同 username
+    email_to_addrs: list[str] = field(default_factory=list)
+    email_use_ssl: bool = True                 # True→SMTP_SSL, False→SMTP+STARTTLS
+    # ===== 全局参数 =====
     poll_interval_seconds: int = 30
     # 涨跌停封单将尽告警参数
     limit_seal_exhaust_seconds: int = 30       # 预测封单将在多少秒内耗尽时告警
     limit_seal_exhaust_samples: int = 3        # 计算平均消耗速度的轮询周期数
-    disguise_templates: dict[str, list[str]] = field(default_factory=dict)
+    # ===== 通知模板 =====
+    disguise_templates: dict[str, list[str]] = field(default_factory=dict)            # 全局基础模板
+    market_templates: dict[str, dict[str, list[str]]] = field(default_factory=dict)  # 按市场覆盖
+    # ===== 标的 =====
     stocks: list[StockConfig] = field(default_factory=list)
     funds: list[FundConfig] = field(default_factory=list)
     cryptos: list[CryptoConfig] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
+            "notify_mode": self.notify_mode,
+            "notify_channels": dict(self.notify_channels),
+            "notify_priority": list(self.notify_priority),
             "dingding_webhook": self.dingding_webhook,
             "at_mobiles": list(self.at_mobiles),
             "at_user_ids": list(self.at_user_ids),
+            "email_smtp_host": self.email_smtp_host,
+            "email_smtp_port": self.email_smtp_port,
+            "email_username": self.email_username,
+            "email_password": self.email_password,
+            "email_from_addr": self.email_from_addr,
+            "email_to_addrs": list(self.email_to_addrs),
+            "email_use_ssl": self.email_use_ssl,
             "poll_interval_seconds": self.poll_interval_seconds,
             "limit_seal_exhaust_seconds": self.limit_seal_exhaust_seconds,
             "limit_seal_exhaust_samples": self.limit_seal_exhaust_samples,
             "disguise_templates": self.disguise_templates,
+            "market_templates": self.market_templates,
             "stocks": [s.to_dict() for s in self.stocks],
             "funds": [f.to_dict() for f in self.funds],
             "cryptos": [c.to_dict() for c in self.cryptos],
@@ -292,18 +332,75 @@ class Config:
         loaded_templates = d.get("disguise_templates", {})
         merged_templates = dict(DEFAULT_TEMPLATES)
         merged_templates.update(loaded_templates)
+        # 市场模板：保留三个 market key，缺失补空 dict
+        loaded_market = d.get("market_templates", {})
+        normalized_market: dict[str, dict[str, list[str]]] = {}
+        for mkt in TEMPLATE_MARKETS:
+            tmap = loaded_market.get(mkt) or {}
+            normalized_market[mkt] = {
+                at: list(t) for at, t in tmap.items() if isinstance(t, list)
+            }
+        channel = d.get("notify_channel", "dingding")
+        if channel not in NOTIFY_CHANNELS:
+            channel = "dingding"
+        # 通知模式：multi(全发) / single(优先级回退)
+        mode = d.get("notify_mode", "single")
+        if mode not in NOTIFY_MODES:
+            mode = "single"
+        # 通道开关：缺失时从旧 notify_channel 迁移（单一开启）
+        channels_raw = d.get("notify_channels", {})
+        if channels_raw:
+            notify_channels = {ch: bool(channels_raw.get(ch, False)) for ch in NOTIFY_CHANNELS}
+        else:
+            other = "email" if channel == "dingding" else "dingding"
+            notify_channels = {channel: True, other: False}
+        # 优先级：缺失时 = 默认优先级；校验补齐缺失通道
+        priority_raw = d.get("notify_priority") or list(DEFAULT_NOTIFY_PRIORITY)
+        notify_priority = [p for p in priority_raw if p in NOTIFY_CHANNELS]
+        for ch in NOTIFY_CHANNELS:
+            if ch not in notify_priority:
+                notify_priority.append(ch)
         return cls(
+            notify_mode=mode,
+            notify_channels=notify_channels,
+            notify_priority=notify_priority,
             dingding_webhook=d.get("dingding_webhook", ""),
             at_mobiles=list(d.get("at_mobiles", [])),
             at_user_ids=list(d.get("at_user_ids", [])),
+            email_smtp_host=d.get("email_smtp_host", ""),
+            email_smtp_port=int(d.get("email_smtp_port", 465)),
+            email_username=d.get("email_username", ""),
+            email_password=d.get("email_password", ""),
+            email_from_addr=d.get("email_from_addr", ""),
+            email_to_addrs=list(d.get("email_to_addrs", [])),
+            email_use_ssl=bool(d.get("email_use_ssl", True)),
             poll_interval_seconds=int(d.get("poll_interval_seconds", 30)),
             limit_seal_exhaust_seconds=int(d.get("limit_seal_exhaust_seconds", 30)),
             limit_seal_exhaust_samples=int(d.get("limit_seal_exhaust_samples", 3)),
             disguise_templates=merged_templates,
+            market_templates=normalized_market,
             stocks=[StockConfig.from_dict(x) for x in d.get("stocks", [])],
             funds=[FundConfig.from_dict(x) for x in d.get("funds", [])],
             cryptos=[CryptoConfig.from_dict(x) for x in d.get("cryptos", [])],
         )
+
+    def get_templates_for(self, market: str, alert_type: str) -> list[str]:
+        """取模板：市场覆盖优先，空列表/缺失回退全局基础模板。"""
+        mkt_map = self.market_templates.get(market) or {}
+        tpls = mkt_map.get(alert_type)
+        if tpls:
+            return list(tpls)
+        return list(self.disguise_templates.get(alert_type, []))
+
+    def channel_ready(self, channel: str) -> bool:
+        """通道是否已开启且配置完整可发送。"""
+        if not self.notify_channels.get(channel):
+            return False
+        if channel == "dingding":
+            return bool(self.dingding_webhook)
+        if channel == "email":
+            return bool(self.email_smtp_host and self.email_username and self.email_to_addrs)
+        return False
 
     def find_stock(self, code: str) -> Optional[StockConfig]:
         for s in self.stocks:
@@ -403,6 +500,7 @@ class ConfigStore:
         cfg = Config(
             dingding_webhook=os.environ.get("DINGDING_WEBHOOK", ""),
             disguise_templates=DEFAULT_TEMPLATES,
+            market_templates={mkt: {} for mkt in TEMPLATE_MARKETS},
             stocks=list(DEFAULT_STOCKS),
         )
         return cfg

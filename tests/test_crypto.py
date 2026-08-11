@@ -132,6 +132,199 @@ class TestPricePrecision:
         assert "10.00" in msgs[0]
 
 
+# ---------- 市场模板回退 ----------
+
+class TestMarketTemplateFallback:
+    def test_market_overrides_global(self):
+        """合约市场模板覆盖全局模板"""
+        m = make_monitor()
+        m.disguise_templates['price_high'] = ["GLOBAL {name}"]
+        m.market_templates['crypto'] = {'price_high': ["CRYPTO {name}"]}
+        add_crypto(m, "fapi:BTCUSDT", price_high=100000)
+        m.yesterday_close["fapi:BTCUSDT"] = 95000
+        msgs = capture(m)
+        m.check_stock_alerts("fapi:BTCUSDT", override_price=99000)  # init
+        m.check_stock_alerts("fapi:BTCUSDT", override_price=101000)  # trigger
+        assert len(msgs) == 1
+        assert msgs[0].startswith("CRYPTO ")
+
+    def test_stock_falls_back_to_global(self):
+        """股票市场无覆盖时回退全局模板"""
+        m = make_monitor()
+        m.disguise_templates['price_high'] = ["GLOBAL {name}"]
+        # market_templates.stock 为空
+        m.add_stock("sh600000", {"name": "测试", "nickname": "", "cooldown_minutes": 5})
+        m.stocks["sh600000"]["price_high"] = 10
+        m.yesterday_close["sh600000"] = 9
+        msgs = capture(m)
+        m.check_stock_alerts("sh600000", override_price=9)   # init
+        m.check_stock_alerts("sh600000", override_price=11)   # trigger
+        assert len(msgs) == 1
+        assert msgs[0].startswith("GLOBAL ")
+
+    def test_empty_market_list_falls_back(self):
+        """市场模板显式为空列表时回退全局（避免发空消息）"""
+        m = make_monitor()
+        m.disguise_templates['price_high'] = ["GLOBAL {name}"]
+        m.market_templates['crypto'] = {'price_high': []}  # 显式空列表
+        add_crypto(m, "fapi:BTCUSDT", price_high=100000)
+        m.yesterday_close["fapi:BTCUSDT"] = 95000
+        msgs = capture(m)
+        m.check_stock_alerts("fapi:BTCUSDT", override_price=99000)  # init
+        m.check_stock_alerts("fapi:BTCUSDT", override_price=101000)  # trigger
+        assert len(msgs) == 1
+        assert msgs[0].startswith("GLOBAL ")
+
+    def test_no_template_sends_nothing(self):
+        """全局和市场都无该 alert_type 模板时不发送"""
+        m = make_monitor()
+        m.disguise_templates = {}  # 清空全局
+        m.market_templates = {"stock": {}, "fund": {}, "crypto": {}}
+        m.add_stock("sh600000", {"name": "测试", "nickname": "", "cooldown_minutes": 5})
+        m.stocks["sh600000"]["price_high"] = 10
+        m.yesterday_close["sh600000"] = 9
+        msgs = capture(m)
+        m.check_stock_alerts("sh600000", override_price=9)   # init
+        m.check_stock_alerts("sh600000", override_price=11)   # trigger
+        assert len(msgs) == 0
+
+
+# ---------- 通知通道分发 ----------
+
+class TestNotifyChannelDispatch:
+    def _make(self, **kw):
+        defaults = dict(dingding_webhook="http://x", notify_mode="single",
+                        notify_channels={"dingding": True, "email": False},
+                        notify_priority=["dingding", "email"])
+        defaults.update(kw)
+        return StockMonitor(**defaults)
+
+    def test_single_mode_first_ready_channel(self):
+        """single 模式：首个开启且完整的通道发送"""
+        m = self._make()
+        calls = []
+        m._do_send = lambda msg: calls.append(("dd", msg)) or True
+        m._send_email = lambda msg: calls.append(("email", msg)) or True
+        m.send_notification("hello")
+        assert calls == [("dd", "hello")]
+
+    def test_single_mode_falls_back_on_failure(self):
+        """single 模式：首个失败则回退到下一个，直到成功"""
+        m = self._make(notify_channels={"dingding": True, "email": True},
+                       notify_priority=["dingding", "email"],
+                       email_smtp_host="smtp.x", email_username="a@b", email_to_addrs=["c@d"])
+        calls = []
+        m._do_send = lambda msg: calls.append(("dd", msg)) or False   # 失败
+        m._send_email = lambda msg: calls.append(("email", msg)) or True
+        m.send_notification("hello")
+        assert calls == [("dd", "hello"), ("email", "hello")]
+
+    def test_single_mode_stops_after_success(self):
+        """single 模式：成功后不再尝试后续通道"""
+        m = self._make(notify_channels={"dingding": True, "email": True},
+                       notify_priority=["dingding", "email"])
+        calls = []
+        m._do_send = lambda msg: calls.append(("dd", msg)) or True   # 成功
+        m._send_email = lambda msg: calls.append(("email", msg)) or True
+        m.send_notification("hello")
+        assert calls == [("dd", "hello")]  # email 未被调用
+
+    def test_single_mode_skips_disabled_channel(self):
+        """single 模式：跳过未开启的通道"""
+        m = self._make(notify_channels={"dingding": False, "email": True},
+                       notify_priority=["dingding", "email"],
+                       email_smtp_host="smtp.x", email_username="a@b", email_to_addrs=["c@d"])
+        calls = []
+        m._do_send = lambda msg: calls.append(("dd", msg)) or True
+        m._send_email = lambda msg: calls.append(("email", msg)) or True
+        m.send_notification("hello")
+        assert calls == [("email", "hello")]
+
+    def test_single_mode_all_fail(self):
+        """single 模式：所有通道失败，全部尝试"""
+        m = self._make(notify_channels={"dingding": True, "email": True},
+                       notify_priority=["dingding", "email"],
+                       email_smtp_host="smtp.x", email_username="a@b", email_to_addrs=["c@d"])
+        calls = []
+        m._do_send = lambda msg: calls.append(("dd", msg)) or False
+        m._send_email = lambda msg: calls.append(("email", msg)) or False
+        m.send_notification("hello")
+        assert calls == [("dd", "hello"), ("email", "hello")]
+
+    def test_multi_mode_sends_all_ready(self):
+        """multi 模式：向所有开启且完整的通道发送，互不影响"""
+        m = self._make(notify_mode="multi",
+                       notify_channels={"dingding": True, "email": True},
+                       notify_priority=["dingding", "email"],
+                       email_smtp_host="smtp.x", email_username="a@b", email_to_addrs=["c@d"])
+        calls = []
+        m._do_send = lambda msg: calls.append(("dd", msg)) or False
+        m._send_email = lambda msg: calls.append(("email", msg)) or True
+        m.send_notification("hello")
+        assert calls == [("dd", "hello"), ("email", "hello")]
+
+    def test_multi_mode_skips_disabled(self):
+        """multi 模式：只发开启且完整的通道"""
+        m = self._make(notify_mode="multi",
+                       notify_channels={"dingding": True, "email": False})
+        calls = []
+        m._do_send = lambda msg: calls.append(("dd", msg)) or True
+        m._send_email = lambda msg: calls.append(("email", msg)) or True
+        m.send_notification("hello")
+        assert calls == [("dd", "hello")]
+
+    def test_empty_message_dropped(self):
+        """空消息直接丢弃"""
+        m = self._make()
+        calls = []
+        m._do_send = lambda msg: calls.append(msg)
+        m._send_email = lambda msg: calls.append(msg)
+        m.send_notification("")
+        m.send_notification("   \n  ")
+        assert calls == []
+
+    def test_batch_mode_buffers(self):
+        """batch 模式下消息进缓冲区而非直接发送"""
+        m = self._make()
+        m._batch_mode = True
+        m._do_send = lambda msg: (_ for _ in ()).throw(AssertionError("不应直接发送"))
+        m.send_notification("a")
+        m.send_notification("b")
+        assert m._alert_buffer == ["a", "b"]
+
+    def test_send_email_via_mock_smtp(self):
+        """_send_email 用 mock SMTP 验证登录、发送、退出"""
+        with patch("smtplib.SMTP_SSL") as mock_smtp:
+            instance = MagicMock()
+            mock_smtp.return_value = instance
+            m = StockMonitor(dingding_webhook="http://x", notify_mode="single",
+                             notify_channels={"email": True}, notify_priority=["email"],
+                             email_smtp_host="smtp.qq.com", email_smtp_port=465,
+                             email_username="a@b.com", email_password="pwd",
+                             email_to_addrs=["c@d.com"], email_use_ssl=True)
+            ok = m._send_email("告警内容")
+            assert ok is True
+            mock_smtp.assert_called_once_with("smtp.qq.com", 465, timeout=10)
+            instance.login.assert_called_once_with("a@b.com", "pwd")
+            instance.sendmail.assert_called_once()
+            args = instance.sendmail.call_args.args
+            assert args[0] == "a@b.com"
+            assert args[1] == ["c@d.com"]
+            assert "From: a@b.com" in args[2]
+            assert "To: c@d.com" in args[2]
+            assert "Subject:" in args[2]
+            instance.quit.assert_called_once()
+
+    def test_send_email_returns_false_on_exception(self):
+        """_send_email 异常时返回 False（供 single 模式回退判断）"""
+        with patch("smtplib.SMTP_SSL", side_effect=Exception("conn refused")):
+            m = StockMonitor(dingding_webhook="http://x", notify_mode="single",
+                             notify_channels={"email": True}, notify_priority=["email"],
+                             email_smtp_host="smtp.x", email_username="a@b",
+                             email_to_addrs=["c@d"])
+            assert m._send_email("x") is False
+
+
 # ---------- 做T事件 ----------
 
 class TestTEvents:

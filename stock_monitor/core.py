@@ -21,7 +21,14 @@ import cn_stock_holidays.data as shsz
 logger = logging.getLogger(__name__)
 
 class StockMonitor:
-    def __init__(self, dingding_webhook: str, at_mobiles: list[str] | None = None, at_user_ids: list[str] | None = None):
+    def __init__(self, dingding_webhook: str, at_mobiles: list[str] | None = None, at_user_ids: list[str] | None = None,
+                 *, notify_mode: str = "single",
+                 notify_channels: dict[str, bool] | None = None,
+                 notify_priority: list[str] | None = None,
+                 email_smtp_host: str = "", email_smtp_port: int = 465,
+                 email_username: str = "", email_password: str = "",
+                 email_from_addr: str = "", email_to_addrs: list[str] | None = None,
+                 email_use_ssl: bool = True):
         """
         初始化股票监控器
 
@@ -29,12 +36,25 @@ class StockMonitor:
             dingding_webhook: 钉钉群机器人的Webhook地址
             at_mobiles: 通知时 @ 的手机号列表
             at_user_ids: 通知时 @ 的用户 ID 列表
+            notify_mode: "multi"(全发) | "single"(优先级回退)
+            notify_channels: 通道开关 {"dingding": bool, "email": bool}
+            notify_priority: 优先级顺序（single 模式按此回退）
+            email_*: SMTP 邮箱配置
         """
-        if not dingding_webhook:
-            logger.warning(
-                "钉钉 Webhook 未配置。发送通知将失败，请通过 Web UI 或环境变量 DINGDING_WEBHOOK 设置。"
-            )
+        self.notify_mode = notify_mode if notify_mode in ("multi", "single") else "single"
+        self.notify_channels = dict(notify_channels or {"dingding": True, "email": False})
+        self.notify_priority = list(notify_priority or ["dingding", "email"])
         self.dingding_webhook = dingding_webhook
+        # 邮箱配置
+        self.email_smtp_host = email_smtp_host
+        self.email_smtp_port = email_smtp_port
+        self.email_username = email_username
+        self.email_password = email_password
+        self.email_from_addr = email_from_addr or email_username
+        self.email_to_addrs = list(email_to_addrs or [])
+        self.email_use_ssl = email_use_ssl
+        if not any(self.channel_ready(ch) for ch in self.notify_priority):
+            logger.warning("无可用通知通道：所有通道未开启或未完整配置，发送通知将失败。")
         self.at_mobiles = list(at_mobiles or [])
         self.at_user_ids = list(at_user_ids or [])
         self.stocks = {}  # 监控的股票配置
@@ -85,6 +105,8 @@ class StockMonitor:
 
         # 合约品种集合（add_crypto 注册，用于 monitor_loop 区分 24/7 轮询）
         self._crypto_codes: set[str] = set()
+        # 基金代码集合（add_fund 注册，用于 _market_of 区分 stock/fund）
+        self._fund_codes: set[str] = set()
         # 币安合约 symbol -> pricePrecision 缓存（启动时拉取 exchangeInfo）
         self._crypto_precision: dict[str, int] = {}
 
@@ -151,6 +173,8 @@ class StockMonitor:
                 "⚠️ {name} 跌停封单将尽 预计{seal_eta_seconds}秒耗尽"
             ],
         }
+        # 市场覆盖模板：{"stock": {alert_type: [...]}, "fund": {...}, "crypto": {...}}
+        self.market_templates: dict[str, dict[str, list[str]]] = {"stock": {}, "fund": {}, "crypto": {}}
     
     def add_stock(self, stock_code: str, config: Dict):
         """
@@ -166,6 +190,7 @@ class StockMonitor:
                 - speed_window: 涨速窗口（分钟）
                 - cooldown_minutes: 同类通知冷却时间（分钟）
         """
+        config.setdefault('_market', 'stock')
         self.stocks[stock_code] = config
         self.price_history[stock_code] = []
         self.notification_cooldown[stock_code] = {
@@ -210,6 +235,7 @@ class StockMonitor:
 
     def add_fund(self, fund_code: str, config: Dict):
         """添加基金到监控"""
+        config.setdefault('_market', 'fund')
         self.stocks[fund_code] = config
         self.price_history[fund_code] = []
         self.notification_cooldown[fund_code] = {
@@ -233,10 +259,12 @@ class StockMonitor:
         self._profit_alerted[fund_code] = False
         self._loss_alerted[fund_code] = False
         self.t_events[fund_code] = []
+        self._fund_codes.add(fund_code)
         logger.info(f"添加监控基金: {config['name']} ({fund_code})")
 
     def add_crypto(self, crypto_code: str, config: Dict):
         """添加币安合约到监控（复用告警框架，但不启用涨跌停封单告警）"""
+        config.setdefault('_market', 'crypto')
         self.stocks[crypto_code] = config
         self.price_history[crypto_code] = []
         self.notification_cooldown[crypto_code] = {
@@ -752,6 +780,13 @@ class StockMonitor:
         """更新通知冷却时间"""
         self.notification_cooldown.setdefault(stock_code, {})[alert_type] = datetime.now()
     
+    def _market_of(self, stock_info: Dict) -> str:
+        """根据 stock_info 配置字典返回市场标识：stock / fund / crypto"""
+        mkt = stock_info.get('_market') if isinstance(stock_info, dict) else None
+        if mkt in ('stock', 'fund', 'crypto'):
+            return mkt
+        return 'stock'
+
     def generate_disguise_message(self, alert_type: str, stock_info: Dict,
                                  current_price: float, threshold: float = None, *,
                                  tier_index: int = None, tier_threshold: float = None,
@@ -769,7 +804,13 @@ class StockMonitor:
                                  profit_pct: float = None,) -> str:
         import random
 
-        template = random.choice(self.disguise_templates[alert_type])
+        # 模板回退：市场覆盖 → 全局基础 → 空则不发（返回空字符串）
+        market = self._market_of(stock_info)
+        mkt_map = self.market_templates.get(market) or {}
+        templates = mkt_map.get(alert_type) or self.disguise_templates.get(alert_type) or []
+        if not templates:
+            return ""
+        template = random.choice(templates)
 
         # 价格精度：合约品种按 exchangeInfo 的 pricePrecision，A 股/基金默认 2
         precision = int(stock_info.get('price_precision', 2) if isinstance(stock_info, dict) else 2)
@@ -821,18 +862,48 @@ class StockMonitor:
         return message
     
     def send_dingding_notification(self, message: str):
-        """
-        发送钉钉通知
-        
-        Args:
-            message: 通知消息
-        """
+        """发送通知（向后兼容的别名）"""
+        self.send_notification(message)
+
+    def channel_ready(self, channel: str) -> bool:
+        """通道是否已开启且配置完整可发送。"""
+        if not self.notify_channels.get(channel):
+            return False
+        if channel == "dingding":
+            return bool(self.dingding_webhook)
+        if channel == "email":
+            return bool(self.email_smtp_host and self.email_username and self.email_to_addrs)
+        return False
+
+    def send_notification(self, message: str):
+        """发送通知。空消息丢弃；multi 模式全发，single 模式按优先级回退到首个成功。"""
+        if not message or not message.strip():
+            return
         if self._batch_mode:
             self._alert_buffer.append(message)
             return
-        self._do_send(message)
+        if self.notify_mode == "multi":
+            for ch in self.notify_priority:
+                if self.channel_ready(ch):
+                    self._dispatch(ch, message)
+            return
+        # single 模式：按优先级找首个开启且完整的通道，失败回退下一个，直到成功
+        for ch in self.notify_priority:
+            if not self.channel_ready(ch):
+                continue
+            ok = self._dispatch(ch, message)
+            if ok:
+                return
+            logger.warning(f"通道 {ch} 发送失败，尝试回退到下一个通道")
+        logger.error("所有通知通道均发送失败")
 
-    def _do_send(self, message: str):
+    def _dispatch(self, channel: str, message: str) -> bool:
+        """实际发送到指定通道，返回是否成功。"""
+        if channel == "email":
+            return self._send_email(message)
+        return self._do_send(message)
+
+    def _do_send(self, message: str) -> bool:
         at_mobiles = self.at_mobiles if self.at_mobiles else None
         at_user_ids = self.at_user_ids if self.at_user_ids else None
         try:
@@ -868,20 +939,57 @@ class StockMonitor:
                     pass
                 if errcode == 0:
                     logger.info(f"钉钉通知发送成功: {message[:50]}...")
+                    return True
                 else:
                     logger.error(f"钉钉通知被拒: errcode={errcode} errmsg={errmsg} 消息: {message[:50]}...")
+                    return False
             else:
                 logger.error(f"钉钉通知发送失败: {response.status_code}")
+                return False
                 
         except Exception as e:
             logger.error(f"发送钉钉通知异常: {e}")
-    
+            return False
+
+    def _send_email(self, message: str) -> bool:
+        """通过 SMTP 发送邮件通知，返回是否成功。"""
+        if not (self.email_smtp_host and self.email_username and self.email_to_addrs):
+            logger.error("邮箱通知未完整配置（host/username/to_addrs），跳过发送")
+            return False
+        import smtplib
+        from email.mime.text import MIMEText
+        try:
+            subject = "stock-monitor 告警"
+            msg = MIMEText(message, "plain", "utf-8")
+            msg["Subject"] = subject
+            from_addr = self.email_from_addr or self.email_username
+            msg["From"] = from_addr
+            msg["To"] = ", ".join(self.email_to_addrs)
+            if self.email_use_ssl:
+                server = smtplib.SMTP_SSL(self.email_smtp_host, self.email_smtp_port, timeout=10)
+            else:
+                server = smtplib.SMTP(self.email_smtp_host, self.email_smtp_port, timeout=10)
+                server.starttls()
+            try:
+                server.login(self.email_username, self.email_password)
+                server.sendmail(from_addr, self.email_to_addrs, msg.as_string())
+                logger.info(f"邮件通知发送成功: {message[:50]}...")
+                return True
+            finally:
+                try:
+                    server.quit()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"发送邮件通知异常: {e}")
+            return False
+
     def flush_alerts(self):
         if not self._alert_buffer:
             return
         message = '\n'.join(self._alert_buffer)
         self._alert_buffer.clear()
-        self._do_send(message)
+        self.send_notification(message)
 
     def _get_high_tiers(self, config: dict) -> list[float]:
         tiers = []

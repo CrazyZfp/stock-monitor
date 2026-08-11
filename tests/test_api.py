@@ -90,17 +90,33 @@ class TestStocksAPI:
 
 class TestTemplatesAPI:
     def test_get_default(self, client: TestClient):
-        """默认模板应包含所有告警类型"""
+        """默认模板应包含所有告警类型（global 子对象）"""
         r = client.get("/api/templates")
-        assert "price_high" in r.json()
-        assert "daily_up" in r.json()
-        assert "daily_down" in r.json()
+        data = r.json()
+        assert "global" in data and "market" in data
+        assert "price_high" in data["global"]
+        assert "daily_up" in data["global"]
+        assert "daily_down" in data["global"]
+        # market 三类齐全
+        assert set(data["market"].keys()) == {"stock", "fund", "crypto"}
 
-    def test_put(self, client: TestClient):
-        """更新模板后 GET 应返回新值"""
-        r = client.put("/api/templates", json={"templates": {"price_high": ["🟢 {name}"]}})
+    def test_put_global(self, client: TestClient):
+        """更新全局模板后 GET 应返回新值"""
+        r = client.put("/api/templates", json={"global_templates": {"price_high": ["🟢 {name}"]}})
         assert r.status_code == 200
-        assert client.get("/api/templates").json()["price_high"] == ["🟢 {name}"]
+        assert client.get("/api/templates").json()["global"]["price_high"] == ["🟢 {name}"]
+
+    def test_put_market(self, client: TestClient):
+        """更新市场模板后 GET 应返回新值，且不影响全局（与调用前快照对比）"""
+        before = client.get("/api/templates").json()["global"].get("price_high")
+        r = client.put("/api/templates", json={
+            "market_templates": {"stock": {"price_high": ["股票专属 {name}"]}}
+        })
+        assert r.status_code == 200
+        data = client.get("/api/templates").json()
+        assert data["market"]["stock"]["price_high"] == ["股票专属 {name}"]
+        # 全局未被本次调用覆盖（仍等于调用前的快照）
+        assert data["global"].get("price_high") == before
 
 
 class TestWebhookAPI:
@@ -465,6 +481,88 @@ class TestLimitAlerts:
         for t in ("limit_up", "limit_up_broken", "limit_up_low_seal", "limit_up_exhaust",
                   "limit_down", "limit_down_broken", "limit_down_low_seal", "limit_down_exhaust"):
             assert t in templates
+
+
+class TestNotifySettingsAPI:
+    def test_defaults(self, client: TestClient):
+        """默认：single 模式，钉钉开、邮箱关"""
+        r = client.get("/api/settings/notify")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["mode"] == "single"
+        assert d["channels"] == {"dingding": True, "email": False}
+        assert d["priority"] == ["dingding", "email"]
+
+    def test_put_mode_channels_priority(self, client: TestClient):
+        r = client.put("/api/settings/notify", json={
+            "mode": "multi",
+            "channels": {"dingding": True, "email": True},
+            "priority": ["email", "dingding"],
+        })
+        assert r.status_code == 200
+        d = client.get("/api/settings/notify").json()
+        assert d["mode"] == "multi"
+        assert d["channels"] == {"dingding": True, "email": True}
+        assert d["priority"] == ["email", "dingding"]
+
+    def test_invalid_mode_rejected(self, client: TestClient):
+        r = client.put("/api/settings/notify", json={"mode": "weird"})
+        assert r.status_code == 400
+
+    def test_priority_normalized(self, client: TestClient):
+        """优先级缺失通道会被补齐，未知通道被过滤"""
+        r = client.put("/api/settings/notify", json={"priority": ["email"]})
+        assert r.status_code == 200
+        assert client.get("/api/settings/notify").json()["priority"] == ["email", "dingding"]
+
+    def test_config_includes_notify_fields(self, client: TestClient):
+        client.put("/api/settings/notify", json={"mode": "multi"})
+        cfg = client.get("/api/config").json()
+        assert cfg["notify_mode"] == "multi"
+        assert "notify_channels" in cfg
+        assert "notify_priority" in cfg
+        assert "market_templates" in cfg
+
+
+class TestEmailConfigAPI:
+    def test_default_empty(self, client: TestClient):
+        r = client.get("/api/settings/email")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["smtp_host"] == ""
+        assert data["password_set"] is False
+        assert data["to_addrs"] == []
+
+    def test_put_email_opens_email_channel(self, client: TestClient):
+        """保存邮箱配置后自动开启邮箱通道"""
+        r = client.put("/api/settings/email", json={
+            "smtp_host": "smtp.qq.com",
+            "smtp_port": 465,
+            "username": "a@b.com",
+            "password": "secret",
+            "from_addr": "a@b.com",
+            "to_addrs": ["c@d.com"],
+            "use_ssl": True,
+        })
+        assert r.status_code == 200
+        assert client.get("/api/settings/notify").json()["channels"]["email"] is True
+        data = client.get("/api/settings/email").json()
+        assert data["smtp_host"] == "smtp.qq.com"
+        assert data["username"] == "a@b.com"
+        assert data["to_addrs"] == ["c@d.com"]
+        assert data["password_set"] is True
+        assert "password" not in data
+
+    def test_webhook_put_opens_dingding_channel(self, client: TestClient):
+        """保存钉钉配置后自动开启钉钉通道"""
+        client.put("/api/settings/email", json={
+            "smtp_host": "smtp.qq.com", "smtp_port": 465,
+            "username": "a@b.com", "password": "secret",
+            "to_addrs": ["c@d.com"],
+        })
+        assert client.get("/api/settings/notify").json()["channels"]["email"] is True
+        client.put("/api/settings/webhook", json={"webhook": "https://x?access_token=ABC"})
+        assert client.get("/api/settings/notify").json()["channels"]["dingding"] is True
 
 
 class TestStaticUI:

@@ -96,6 +96,102 @@ class TestConfig:
         assert cfg.find_stock("a").name == "A"
         assert cfg.find_stock("missing") is None
 
+    def test_market_templates_round_trip(self):
+        """market_templates 序列化往返"""
+        cfg = Config(
+            disguise_templates={"price_high": ["G {name}"]},
+            market_templates={"stock": {"price_high": ["S {name}"]}, "fund": {}, "crypto": {}},
+        )
+        d = cfg.to_dict()
+        assert d["market_templates"]["stock"]["price_high"] == ["S {name}"]
+        cfg2 = Config.from_dict(d)
+        assert cfg2.market_templates["stock"]["price_high"] == ["S {name}"]
+        assert cfg2.market_templates["fund"] == {}
+        assert cfg2.market_templates["crypto"] == {}
+
+    def test_market_templates_backward_compat(self):
+        """旧 config.json 无 market_templates 字段时加载为空 dict"""
+        d = {"dingding_webhook": "https://x", "disguise_templates": {"price_high": ["G {name}"]}}
+        cfg = Config.from_dict(d)
+        assert cfg.market_templates == {"stock": {}, "fund": {}, "crypto": {}}
+
+    def test_get_templates_for_fallback(self):
+        """get_templates_for：市场覆盖优先，空列表/缺失回退全局"""
+        cfg = Config(
+            disguise_templates={"price_high": ["G {name}"], "price_low": ["L {name}"]},
+            market_templates={"stock": {"price_high": ["S {name}"]}, "fund": {}, "crypto": {}},
+        )
+        # stock 有覆盖 → 用市场
+        assert cfg.get_templates_for("stock", "price_high") == ["S {name}"]
+        # stock 无 price_low 覆盖 → 回退全局
+        assert cfg.get_templates_for("stock", "price_low") == ["L {name}"]
+        # fund 整个为空 → 回退全局
+        assert cfg.get_templates_for("fund", "price_high") == ["G {name}"]
+        # 不存在的 alert_type → 空列表
+        assert cfg.get_templates_for("stock", "nonexistent") == []
+
+    def test_email_config_round_trip(self):
+        """邮箱配置序列化往返"""
+        cfg = Config(
+            notify_mode="multi",
+            notify_channels={"dingding": True, "email": True},
+            notify_priority=["dingding", "email"],
+            email_smtp_host="smtp.qq.com",
+            email_smtp_port=465,
+            email_username="a@b.com",
+            email_password="authcode",
+            email_from_addr="a@b.com",
+            email_to_addrs=["c@d.com"],
+            email_use_ssl=True,
+        )
+        d = cfg.to_dict()
+        assert d["notify_mode"] == "multi"
+        assert d["notify_channels"] == {"dingding": True, "email": True}
+        assert d["notify_priority"] == ["dingding", "email"]
+        assert d["email_smtp_host"] == "smtp.qq.com"
+        cfg2 = Config.from_dict(d)
+        assert cfg2.notify_mode == "multi"
+        assert cfg2.notify_channels["email"] is True
+        assert cfg2.email_smtp_host == "smtp.qq.com"
+        assert cfg2.email_username == "a@b.com"
+        assert cfg2.email_to_addrs == ["c@d.com"]
+        assert cfg2.email_use_ssl is True
+
+    def test_notify_backward_compat_old_single_channel(self):
+        """旧 config.json 只有 notify_channel=email → 单一开启 email, 模式 single"""
+        d = {"notify_channel": "email", "email_smtp_host": "smtp.x", "email_username": "a@b", "email_to_addrs": ["c@d"]}
+        cfg = Config.from_dict(d)
+        assert cfg.notify_mode == "single"
+        assert cfg.notify_channels == {"dingding": False, "email": True}
+        assert cfg.notify_priority == ["dingding", "email"]
+
+    def test_notify_backward_compat_old_dingding(self):
+        """旧 config.json notify_channel=dingding → 单一开启 dingding"""
+        d = {"notify_channel": "dingding", "dingding_webhook": "https://x"}
+        cfg = Config.from_dict(d)
+        assert cfg.notify_channels == {"dingding": True, "email": False}
+
+    def test_notify_invalid_mode_falls_back(self):
+        """非法 notify_mode 回退到 single"""
+        d = {"notify_mode": "weird", "notify_channels": {"dingding": True}}
+        cfg = Config.from_dict(d)
+        assert cfg.notify_mode == "single"
+
+    def test_channel_ready(self):
+        """channel_ready 综合判断开关与配置完整性"""
+        cfg = Config(dingding_webhook="https://x", notify_channels={"dingding": True, "email": False})
+        assert cfg.channel_ready("dingding") is True
+        assert cfg.channel_ready("email") is False  # 未开启
+        cfg.notify_channels["email"] = True
+        assert cfg.channel_ready("email") is False  # 开了但没配置
+        cfg.email_smtp_host = "smtp.x"
+        cfg.email_username = "a@b"
+        cfg.email_to_addrs = ["c@d"]
+        assert cfg.channel_ready("email") is True
+        cfg.notify_channels["dingding"] = False
+        assert cfg.channel_ready("dingding") is False  # 关了
+        assert cfg.channel_ready("unknown") is False
+
 
 class TestConfigStore:
     def test_load_creates_default(self, tmp_store: ConfigStore):

@@ -347,17 +347,52 @@
           <div class="preview-box" id="preview-limit_down_exhaust" hidden></div>
         </div>
       </div>
-      <button class="btn btn-primary" type="submit">保存模板</button>
+      <button class="btn btn-primary" type="submit">保存全局模板</button>
+    </form>
+
+    <h3 style="margin-top:28px; font-size:15px;">按市场覆盖模板</h3>
+    <p class="hint">留空某类型则继承全局基础模板；填入内容则该市场使用专属模板覆盖全局。</p>
+    <div class="market-tabs" id="market-tabs">
+      <button class="market-tab active" data-market="stock">股票</button>
+      <button class="market-tab" data-market="fund">基金</button>
+      <button class="market-tab" data-market="crypto">合约</button>
+    </div>
+    <form id="market-templates-form">
+      <div id="market-templates-fields"></div>
+      <button class="btn btn-primary" type="submit">保存市场模板</button>
     </form>
   </section>
 
   <!-- ====== Webhook ====== -->
   <section id="tab-webhook" class="tab-content">
+    <h3 style="font-size:15px;">通知设置</h3>
+    <div class="form-row" style="margin-bottom:8px;">
+      <label class="channel-radio"><input type="radio" name="notify_mode" value="single" checked> 单渠道（按优先级回退）</label>
+      <label class="channel-radio"><input type="radio" name="notify_mode" value="multi"> 多渠道（全部发送）</label>
+    </div>
+    <p class="hint" id="notify-mode-hint">单渠道：按优先级顺序找首个可用的通道发送，失败则回退到下一个。多渠道：向所有开启的通道都发送。</p>
+
+    <div class="form-row" style="margin-bottom:14px;">
+      <label class="channel-radio"><input type="checkbox" name="ch_dingding" checked> 钉钉</label>
+      <label class="channel-radio"><input type="checkbox" name="ch_email"> 邮箱</label>
+    </div>
+    <div class="form-row" style="margin-bottom:14px;">
+      <label>优先级（单渠道模式下生效，上方为最高）</label>
+      <div id="priority-list" class="priority-list">
+        <div class="priority-item" data-channel="dingding"><span class="priority-handle">⋮⋮</span><span>钉钉</span><button type="button" class="btn btn-sm btn-priority-up">↑</button><button type="button" class="btn btn-sm btn-priority-down">↓</button></div>
+        <div class="priority-item" data-channel="email"><span class="priority-handle">⋮⋮</span><span>邮箱</span><button type="button" class="btn btn-sm btn-priority-up">↑</button><button type="button" class="btn btn-sm btn-priority-down">↓</button></div>
+      </div>
+    </div>
+    <div class="actions" style="margin-bottom:18px;">
+      <button class="btn btn-primary" type="button" id="btn-save-notify-settings">保存通知设置</button>
+    </div>
+
+    <h3 style="font-size:15px;">钉钉配置</h3>
     <form id="webhook-form">
       <div class="form-row">
         <label>钉钉机器人 Webhook URL</label>
         <input type="password" name="webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." autocomplete="off">
-        <p class="hint">可从钉钉群机器人设置中获取。空字符串表示不发通知。</p>
+        <p class="hint">可从钉钉群机器人设置中获取。保存后自动开启钉钉通道。</p>
       </div>
       <div class="form-grid" style="margin-bottom:14px;">
         <div class="form-row">
@@ -374,12 +409,46 @@
       </div>
     </form>
 
+    <h3 style="margin-top:24px; font-size:15px;">邮箱配置</h3>
+    <form id="email-form">
+      <div class="form-grid" style="margin-bottom:14px;">
+        <div class="form-row">
+          <label>SMTP 服务器</label>
+          <input name="smtp_host" placeholder="smtp.qq.com">
+        </div>
+        <div class="form-row">
+          <label>SMTP 端口</label>
+          <input name="smtp_port" type="number" value="465" placeholder="465(SSL) / 587(STARTTLS)">
+        </div>
+      </div>
+      <div class="form-grid" style="margin-bottom:14px;">
+        <div class="form-row">
+          <label>发件邮箱 (用户名)</label>
+          <input name="username" placeholder="sender@example.com" autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label>SMTP 授权码</label>
+          <input name="password" type="password" placeholder="留空表示不修改" autocomplete="off">
+        </div>
+      </div>
+      <div class="form-row">
+        <label>收件人 (多个用英文逗号分隔)</label>
+        <input name="to_addrs" placeholder="recv1@example.com,recv2@example.com">
+      </div>
+      <div class="form-row">
+        <label class="channel-radio"><input type="checkbox" name="use_ssl" checked> 使用 SSL (465 端口)；取消则用 STARTTLS (587 端口)</label>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" type="submit">保存邮箱配置</button>
+      </div>
+    </form>
+
     <h3 style="margin-top:24px; font-size:15px;">发送测试消息</h3>
     <form id="test-notify-form">
       <div class="form-row">
         <label>自定义消息内容</label>
         <textarea name="message" rows="3" placeholder="🧪 stock-monitor 测试消息 - 来自 Web UI">🧪 stock-monitor 测试消息 - 来自 Web UI</textarea>
-        <p class="hint">支持 emoji 和换行，发送后会原样推送到 webhook。留空使用上方默认文案。</p>
+        <p class="hint">支持 emoji 和换行，按当前通知设置（模式+通道开关+优先级）发送。留空使用上方默认文案。</p>
       </div>
       <div class="actions">
         <button class="btn" type="button" id="btn-test-notify">发送</button>

@@ -54,16 +54,27 @@ class TestMonitorManagerCRUD:
 
     def test_update_templates(self, mgr: MonitorManager):
         """更新通知模板后配置持久化"""
-        mgr.update_templates({"price_high": ["TEST {name}"]})
+        mgr.update_templates(global_templates={"price_high": ["TEST {name}"]})
         assert mgr.get_config().disguise_templates["price_high"] == ["TEST {name}"]
 
     def test_update_templates_merge_preserves_other_types(self, mgr: MonitorManager):
         """部分模板更新不得覆盖未提交的类型（如 profit/loss），防止模板被静默丢弃"""
-        mgr.update_templates({"price_high": ["TEST {name}"]})
+        mgr.update_templates(global_templates={"price_high": ["TEST {name}"]})
         templates = mgr.get_config().disguise_templates
         assert templates["price_high"] == ["TEST {name}"]
         assert templates["profit"]
         assert templates["loss"]
+
+    def test_update_market_templates(self, mgr: MonitorManager):
+        """市场模板独立更新且不影响全局"""
+        mgr.update_templates(global_templates={"price_high": ["GLOBAL {name}"]})
+        mgr.update_templates(market_templates={"stock": {"price_high": ["STOCK {name}"]}})
+        cfg = mgr.get_config()
+        assert cfg.disguise_templates["price_high"] == ["GLOBAL {name}"]
+        assert cfg.market_templates["stock"]["price_high"] == ["STOCK {name}"]
+        # 其它市场仍空
+        assert cfg.market_templates["fund"] == {}
+        assert cfg.market_templates["crypto"] == {}
 
     def test_replace_config(self, mgr: MonitorManager):
         """整体替换配置后应完全生效"""

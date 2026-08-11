@@ -158,6 +158,22 @@ dialog .actions { justify-content: flex-end; margin-top: 22px; }
 .preview-vars summary { cursor: pointer; color: #6b7280; font-size: 12px; }
 .preview-vars pre { background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; padding: 6px 8px; font-size: 11px; margin: 4px 0 0; overflow-x: auto; }
 
+/* 市场模板 tab */
+.market-tabs { display: flex; gap: 4px; margin: 10px 0 14px 0; border-bottom: 1px solid #e5e7eb; }
+.market-tab { background: transparent; border: none; color: #6b7280; padding: 6px 14px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; transition: color .15s, border-color .15s; }
+.market-tab.active { color: #3b82f6; border-bottom-color: #3b82f6; font-weight: 600; }
+
+/* 通知通道单选 */
+.channel-radio { display: inline-flex; align-items: center; gap: 6px; margin-right: 18px; font-size: 14px; cursor: pointer; }
+.channel-radio input { margin: 0; }
+
+/* 优先级排序 */
+.priority-list { display: flex; flex-direction: column; gap: 6px; max-width: 320px; }
+.priority-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+.priority-item .priority-handle { color: #9ca3af; cursor: grab; font-size: 14px; }
+.priority-item span:not(.priority-handle) { flex: 1; font-size: 13px; }
+.priority-item .btn-priority-up, .priority-item .btn-priority-down { font-size: 11px; padding: 2px 8px; }
+
 /* ===== 做T ===== */
 .t-events-cell { min-width: 140px; }
 .t-btns { display: flex; gap: 4px; margin-bottom: 4px; }

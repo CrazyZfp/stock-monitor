@@ -1046,16 +1046,57 @@ $('#import-form').addEventListener('submit', async (e) => {
     loadCryptos();
     loadTemplates();
     loadWebhook();
+    loadNotifySettings();
+    loadEmailConfig();
     loadStatus();
   } catch (e) { toast('导入失败: ' + e.message, 'error'); }
 });
 
 // ========== 模板 ==========
+const TEMPLATE_TYPES = ['price_high', 'price_low', 'daily_up', 'daily_down', 'surge_up', 'surge_down', 'retracement', 'bounce', 't_sell', 't_buy', 'limit_up', 'limit_up_broken', 'limit_up_low_seal', 'limit_up_exhaust', 'limit_down', 'limit_down_broken', 'limit_down_low_seal', 'limit_down_exhaust', 'profit', 'loss'];
+const MARKETS = ['stock', 'fund', 'crypto'];
+let currentMarket = 'stock';
+let marketTemplatesData = { stock: {}, fund: {}, crypto: {} };
+
+function buildMarketFields() {
+  const container = $('#market-templates-fields');
+  container.innerHTML = MARKETS.map(mkt => `
+    <div class="market-fields" data-market="${mkt}" ${mkt === currentMarket ? '' : 'hidden'}>
+      ${TEMPLATE_TYPES.map(type => `
+        <div class="template-row">
+          <div class="form-row">
+            <label>${type} <span class="muted">(留空继承全局)</span></label>
+            <textarea name="${type}" rows="2" placeholder="留空 → 使用全局基础模板"></textarea>
+          </div>
+          <div class="preview-row">
+            <button type="button" class="btn btn-preview-market" data-type="${type}" data-market="${mkt}">预览</button>
+            <div class="preview-box" id="preview-${mkt}-${type}" hidden></div>
+          </div>
+        </div>`).join('')}
+    </div>`).join('');
+}
+
 async function loadTemplates() {
   const t = await api('/api/templates');
-  const form = $('#templates-form');
-  for (const k of Object.keys(t)) {
-    if (form.elements[k]) form.elements[k].value = t[k].join('\n');
+  // 全局表单
+  const gform = $('#templates-form');
+  const globalT = t.global || {};
+  for (const k of TEMPLATE_TYPES) {
+    if (gform.elements[k]) gform.elements[k].value = (globalT[k] || []).join('\n');
+  }
+  // 市场表单
+  marketTemplatesData = t.market || { stock: {}, fund: {}, crypto: {} };
+  buildMarketFields();
+  fillMarketForm();
+}
+
+function fillMarketForm() {
+  const mktData = marketTemplatesData[currentMarket] || {};
+  const active = $(`#market-templates-fields .market-fields[data-market="${currentMarket}"]`);
+  if (!active) return;
+  for (const type of TEMPLATE_TYPES) {
+    const el = active.querySelector(`textarea[name="${type}"]`);
+    if (el) el.value = (mktData[type] || []).join('\n');
   }
 }
 
@@ -1063,31 +1104,67 @@ $('#templates-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const templates = {};
-  for (const key of ['price_high', 'price_low', 'daily_up', 'daily_down', 'surge_up', 'surge_down', 'retracement', 'bounce', 't_sell', 't_buy', 'limit_up', 'limit_up_broken', 'limit_up_low_seal', 'limit_up_exhaust', 'limit_down', 'limit_down_broken', 'limit_down_low_seal', 'limit_down_exhaust', 'profit', 'loss']) {
+  for (const key of TEMPLATE_TYPES) {
     templates[key] = form.elements[key].value.split('\n').filter(Boolean);
   }
   try {
-    await api('/api/templates', { method: 'PUT', body: JSON.stringify({ templates }) });
-    toast('模板已保存');
-  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+    await api('/api/templates', { method: 'PUT', body: JSON.stringify({ global_templates: templates }) });
+    toast('全局模板已保存');
+  } catch (err) { toast('保存失败: ' + err.message, 'error'); }
 });
 
-// 模板预览
-$$('.btn-preview').forEach(btn => btn.addEventListener('click', async () => {
-  const type = btn.dataset.type;
-  const form = $('#templates-form');
-  // 多行时预览第一行
-  const text = (form.elements[type].value || '').split('\n').filter(Boolean)[0] || '';
-  if (!text) { toast('请先输入模板内容', 'error'); return; }
-  const box = $(`#preview-${type}`);
+// 市场模板表单
+$('#market-tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.market-tab');
+  if (!btn) return;
+  currentMarket = btn.dataset.market;
+  $$('.market-tab').forEach(b => b.classList.toggle('active', b.dataset.market === currentMarket));
+  $$('#market-templates-fields .market-fields').forEach(div => {
+    div.hidden = div.dataset.market !== currentMarket;
+  });
+  fillMarketForm();
+});
+
+$('#market-templates-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const active = $(`#market-templates-fields .market-fields[data-market="${currentMarket}"]`);
+  const templates = {};
+  for (const type of TEMPLATE_TYPES) {
+    const el = active.querySelector(`textarea[name="${type}"]`);
+    const lines = (el ? el.value : '').split('\n').filter(Boolean);
+    if (lines.length) templates[type] = lines;
+  }
+  const payload = { market_templates: { [currentMarket]: templates } };
   try {
+    await api('/api/templates', { method: 'PUT', body: JSON.stringify(payload) });
+    marketTemplatesData[currentMarket] = templates;
+    toast(`${currentMarket} 市场模板已保存`);
+  } catch (err) { toast('保存失败: ' + err.message, 'error'); }
+});
+
+// 预览逻辑（共用）
+async function doPreview(type, mkt) {
+  let textArea;
+  if (mkt) {
+    textArea = $(`#market-templates-fields .market-fields[data-market="${mkt}"] textarea[name="${type}"]`);
+  } else {
+    textArea = $('#templates-form').elements[type];
+  }
+  const text = ((textArea && textArea.value) || '').split('\n').filter(Boolean)[0] || '';
+  if (!text) { toast('请先输入模板内容', 'error'); return; }
+  const boxId = mkt ? `preview-${mkt}-${type}` : `preview-${type}`;
+  const box = $(`#${boxId}`);
+  try {
+    const body = { template: text, alert_type: type };
+    if (mkt) body.market = mkt;
     const r = await api('/api/templates/preview', {
       method: 'POST',
-      body: JSON.stringify({ template: text, alert_type: type }),
+      body: JSON.stringify(body),
     });
     const stockLabel = r.stock_code ? `（基于 ${r.stock_name}）` : '（示例数据）';
+    const marketLabel = mkt ? `<span class="muted">[${mkt}]</span> ` : '';
     box.innerHTML = `
-      <div class="preview-rendered">${escapeHtml(r.rendered)}</div>
+      <div class="preview-rendered">${marketLabel}${escapeHtml(r.rendered)}</div>
       <div class="preview-meta">${escapeHtml(stockLabel)}</div>
       <details class="preview-vars">
         <summary>占位符值</summary>
@@ -1095,9 +1172,81 @@ $$('.btn-preview').forEach(btn => btn.addEventListener('click', async () => {
       </details>`;
     box.hidden = false;
   } catch (e) { toast('预览失败: ' + e.message, 'error'); }
-}));
+}
 
-// ========== Webhook ==========
+// 全局模板的预览按钮（静态）
+$$('.btn-preview').forEach(btn => {
+  if (!btn.classList.contains('btn-preview-market')) {
+    btn.addEventListener('click', () => doPreview(btn.dataset.type, btn.dataset.market));
+  }
+});
+
+// 市场模板的预览按钮（动态生成，事件委托）
+$('#market-templates-fields').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-preview-market');
+  if (btn) doPreview(btn.dataset.type, btn.dataset.market);
+});
+
+// ========== 通知设置 / Webhook / 邮箱 ==========
+const CHANNEL_LABELS = { dingding: '钉钉', email: '邮箱' };
+
+async function loadNotifySettings() {
+  const r = await api('/api/settings/notify');
+  // 模式
+  document.querySelectorAll('input[name="notify_mode"]').forEach(rd => rd.checked = rd.value === r.mode);
+  // 通道开关
+  const ch = r.channels || {};
+  document.querySelector('input[name="ch_dingding"]').checked = !!ch.dingding;
+  document.querySelector('input[name="ch_email"]').checked = !!ch.email;
+  // 优先级
+  renderPriorityList(r.priority || ['dingding', 'email']);
+}
+
+function renderPriorityList(priority) {
+  const list = $('#priority-list');
+  list.innerHTML = priority.map(ch => `
+    <div class="priority-item" data-channel="${ch}">
+      <span class="priority-handle">⋮⋮</span>
+      <span>${CHANNEL_LABELS[ch] || ch}</span>
+      <button type="button" class="btn btn-sm btn-priority-up">↑</button>
+      <button type="button" class="btn btn-sm btn-priority-down">↓</button>
+    </div>`).join('');
+}
+
+function getPriorityOrder() {
+  return Array.from($$('#priority-list .priority-item')).map(el => el.dataset.channel);
+}
+
+// 优先级上移/下移
+$('#priority-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-priority-up, .btn-priority-down');
+  if (!btn) return;
+  const item = btn.closest('.priority-item');
+  const up = btn.classList.contains('btn-priority-up');
+  if (up && item.previousElementSibling) {
+    item.parentNode.insertBefore(item, item.previousElementSibling);
+  } else if (!up && item.nextElementSibling) {
+    item.parentNode.insertBefore(item.nextElementSibling, item);
+  }
+});
+
+// 保存通知设置
+$('#btn-save-notify-settings').addEventListener('click', async () => {
+  const mode = document.querySelector('input[name="notify_mode"]:checked')?.value;
+  const channels = {
+    dingding: document.querySelector('input[name="ch_dingding"]').checked,
+    email: document.querySelector('input[name="ch_email"]').checked,
+  };
+  const priority = getPriorityOrder();
+  try {
+    await api('/api/settings/notify', {
+      method: 'PUT',
+      body: JSON.stringify({ mode, channels, priority }),
+    });
+    toast('通知设置已保存');
+  } catch (err) { toast('保存失败: ' + err.message, 'error'); }
+});
+
 async function loadWebhook() {
   const r = await api('/api/settings/webhook');
   const form = $('#webhook-form');
@@ -1123,9 +1272,46 @@ $('#webhook-form').addEventListener('submit', async (e) => {
         at_user_ids: parseAtList(form.elements.at_user_ids.value),
       }),
     });
-    toast('已保存');
+    toast('钉钉配置已保存（已开启钉钉通道）');
     form.reset();
     loadWebhook();
+    loadNotifySettings();
+  } catch (err) { toast('保存失败: ' + err.message, 'error'); }
+});
+
+// 邮箱配置
+async function loadEmailConfig() {
+  const r = await api('/api/settings/email');
+  const form = $('#email-form');
+  form.elements.smtp_host.value = r.smtp_host || '';
+  form.elements.smtp_port.value = r.smtp_port || 465;
+  form.elements.username.value = r.username || '';
+  form.elements.password.value = '';
+  form.elements.password.placeholder = r.password_set ? '已设置 (输入新授权码覆盖)' : 'SMTP 授权码';
+  form.elements.to_addrs.value = (r.to_addrs || []).join(', ');
+  form.elements.use_ssl.checked = r.use_ssl !== false;
+}
+
+$('#email-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const pw = form.elements.password.value;
+  if (!pw) { toast('请输入 SMTP 授权码', 'error'); return; }
+  try {
+    await api('/api/settings/email', {
+      method: 'PUT',
+      body: JSON.stringify({
+        smtp_host: form.elements.smtp_host.value,
+        smtp_port: parseInt(form.elements.smtp_port.value, 10) || 465,
+        username: form.elements.username.value,
+        password: pw,
+        to_addrs: parseAtList(form.elements.to_addrs.value),
+        use_ssl: form.elements.use_ssl.checked,
+      }),
+    });
+    toast('邮箱配置已保存（已开启邮箱通道）');
+    loadEmailConfig();
+    loadNotifySettings();
   } catch (err) { toast('保存失败: ' + err.message, 'error'); }
 });
 
@@ -1315,4 +1501,6 @@ loadFunds();
 loadCryptos();
 loadTemplates();
 loadWebhook();
+loadNotifySettings();
+loadEmailConfig();
 startQuoteRefresh();
