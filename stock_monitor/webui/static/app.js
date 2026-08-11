@@ -1054,6 +1054,12 @@ $('#import-form').addEventListener('submit', async (e) => {
 
 // ========== 模板 ==========
 const TEMPLATE_TYPES = ['price_high', 'price_low', 'daily_up', 'daily_down', 'surge_up', 'surge_down', 'retracement', 'bounce', 't_sell', 't_buy', 'limit_up', 'limit_up_broken', 'limit_up_low_seal', 'limit_up_exhaust', 'limit_down', 'limit_down_broken', 'limit_down_low_seal', 'limit_down_exhaust', 'profit', 'loss'];
+const TEMPLATE_GROUPS = [
+  ['价格与当日涨跌', ['price_high', 'price_low', 'daily_up', 'daily_down']],
+  ['涨速与回撤', ['surge_up', 'surge_down', 'retracement', 'bounce']],
+  ['做T与盈亏', ['t_sell', 't_buy', 'profit', 'loss']],
+  ['涨跌停', ['limit_up', 'limit_up_broken', 'limit_up_low_seal', 'limit_up_exhaust', 'limit_down', 'limit_down_broken', 'limit_down_low_seal', 'limit_down_exhaust']],
+];
 const MARKETS = ['stock', 'fund', 'crypto'];
 let currentMarket = 'stock';
 let marketTemplatesData = { stock: {}, fund: {}, crypto: {} };
@@ -1062,17 +1068,21 @@ function buildMarketFields() {
   const container = $('#market-templates-fields');
   container.innerHTML = MARKETS.map(mkt => `
     <div class="market-fields" data-market="${mkt}" ${mkt === currentMarket ? '' : 'hidden'}>
-      ${TEMPLATE_TYPES.map(type => `
-        <div class="template-row">
-          <div class="form-row">
-            <label>${type} <span class="muted">(留空继承全局)</span></label>
-            <textarea name="${type}" rows="2" placeholder="留空 → 使用全局基础模板"></textarea>
+      ${TEMPLATE_GROUPS.map(([gname, types]) => `
+        <section class="cfg-group">
+          <h4 class="group-title">${gname}</h4>
+          <div class="template-grid">
+            ${types.map(type => `
+              <div class="template-block">
+                <div class="template-label">
+                  <label>${type} <span class="muted">留空继承全局</span></label>
+                  <button type="button" class="btn btn-preview btn-preview-market" data-type="${type}" data-market="${mkt}">预览</button>
+                </div>
+                <textarea name="${type}" rows="2" placeholder="留空 → 使用全局基础模板"></textarea>
+                <div class="preview-box" id="preview-${mkt}-${type}" hidden></div>
+              </div>`).join('')}
           </div>
-          <div class="preview-row">
-            <button type="button" class="btn btn-preview-market" data-type="${type}" data-market="${mkt}">预览</button>
-            <div class="preview-box" id="preview-${mkt}-${type}" hidden></div>
-          </div>
-        </div>`).join('')}
+        </section>`).join('')}
     </div>`).join('');
 }
 

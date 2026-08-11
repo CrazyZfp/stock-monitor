@@ -162,17 +162,36 @@ header {
 .tab:hover { color: #c7d2e0; background: rgba(148, 163, 184, .06); }
 .tab.active { color: #fff; border-bottom-color: var(--accent); background: linear-gradient(180deg, rgba(240, 180, 41, .09), transparent); }
 
-/* ===== 主体 ===== */
-main { max-width: 1440px; margin: 20px auto; padding: 0 20px 48px; position: relative; z-index: 1; }
+/* ===== 主体（通栏布局，与头部同宽） ===== */
+main { max-width: none; margin: 0; padding: 20px 24px 56px; position: relative; z-index: 1; }
 .tab-content {
   display: none;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 26px 26px 30px;
-  box-shadow: var(--shadow-sm);
+  padding: 4px 0 0;
 }
 .tab-content.active { display: block; animation: tab-fade .24s ease-out; }
+
+/* ===== 分区标题 ===== */
+.section-head { margin-bottom: 18px; }
+.section-title {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 6px;
+  font-size: 16px; font-weight: 600; color: #fff;
+  letter-spacing: -0.01em;
+}
+.section-title::before {
+  content: ""; width: 3px; height: 15px; border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(240, 180, 41, .5);
+}
+.section-head .hint { margin: 2px 0 0; }
+
+/* 页面分区（通栏内容页的节） */
+.cfg-group { margin-bottom: 36px; }
+.cfg-group + .cfg-group { border-top: 1px solid var(--border); padding-top: 28px; }
+.group-title {
+  font-size: 12px; font-weight: 600; color: var(--text-3);
+  letter-spacing: .08em; margin: 0 0 12px;
+}
 
 /* ===== 工具栏 ===== */
 .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
@@ -229,8 +248,7 @@ main { max-width: 1440px; margin: 20px auto; padding: 0 20px 48px; position: rel
 /* ===== 表格（终端风格） ===== */
 .table-scroll {
   overflow: auto;
-  border-radius: var(--radius-sm);
-  max-height: calc(100vh - 220px);
+  max-height: calc(100vh - 210px);
   scroll-behavior: smooth;
 }
 .data-table { width: 100%; border-collapse: collapse; min-width: 1180px; }
@@ -470,10 +488,11 @@ dialog .actions { justify-content: flex-end; margin-top: 22px; }
 #btn-cancel { color: var(--text-2); }
 
 /* ===== 占位符说明 ===== */
-.placeholder-docs { margin-bottom: 16px; }
+.placeholder-docs { margin-bottom: 4px; }
 .placeholder-fold { cursor: pointer; user-select: none; }
 .placeholder-summary { font-size: 13px; color: var(--accent); padding: 4px 0; font-weight: 500; }
-.placeholder-table { width: 100%; border-collapse: collapse; margin: 8px 0 0; font-size: 13px; }
+.placeholder-table-wrap { overflow-x: auto; margin: 8px 0 0; }
+.placeholder-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .placeholder-table th, .placeholder-table td { text-align: left; padding: 7px 10px; border-bottom: 1px solid rgba(148, 163, 184, .07); }
 .placeholder-table th { background: #101826; font-weight: 600; color: var(--text-3); font-size: 12px; white-space: nowrap; }
 .placeholder-table code {
@@ -483,11 +502,46 @@ dialog .actions { justify-content: flex-end; margin-top: 22px; }
 }
 
 /* ===== 模板编辑与预览 ===== */
-.template-row { margin-bottom: 8px; }
-.preview-row { display: flex; align-items: flex-start; gap: 8px; margin: -4px 0 14px 0; }
 .btn-preview { font-size: 12px; padding: 4px 10px; }
-.preview-box {
-  flex: 1;
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.template-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px 12px;
+  min-width: 0;
+  transition: border-color .15s;
+}
+.template-block:focus-within { border-color: rgba(240, 180, 41, .45); }
+.template-label {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 7px;
+}
+.template-label label {
+  font-size: 13px; font-weight: 600; color: #e7ecf4;
+  font-family: var(--font-mono); letter-spacing: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.template-label .muted { font-weight: 400; font-size: 11px; color: var(--text-3); font-family: var(--font); }
+.template-block textarea {
+  width: 100%; padding: 7px 10px;
+  background: #0d1422; border: 1px solid var(--border-2); border-radius: 8px;
+  color: var(--text); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6;
+  resize: vertical;
+  transition: border-color .15s, box-shadow .15s;
+}
+.template-block textarea::placeholder { color: var(--text-3); }
+.template-block textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(240, 180, 41, .14);
+}
+.template-block .preview-box {
+  margin-top: 8px;
   background: rgba(240, 180, 41, .05);
   border: 1px solid rgba(240, 180, 41, .22);
   border-radius: var(--radius-sm); padding: 10px 12px; font-size: 13px;
@@ -503,6 +557,20 @@ dialog .actions { justify-content: flex-end; margin-top: 22px; }
   background: #0d1422; border: 1px solid var(--border); border-radius: 6px;
   padding: 8px 10px; font-size: 11px; font-family: var(--font-mono);
   margin: 4px 0 0; overflow-x: auto; color: #c7d2e0;
+}
+
+/* ===== 弹窗字段分组 ===== */
+.cfg-fieldset { border: 0; margin: 0 0 20px; padding: 0; min-width: 0; }
+.cfg-fieldset + .cfg-fieldset { border-top: 1px solid var(--border); padding-top: 18px; }
+.cfg-fieldset legend {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0; margin-bottom: 14px;
+  font-size: 12px; font-weight: 600; color: var(--text-3);
+  letter-spacing: .08em;
+}
+.cfg-fieldset legend::before {
+  content: ""; width: 3px; height: 11px; border-radius: 2px;
+  background: var(--accent);
 }
 
 /* 市场模板 tab */
@@ -657,8 +725,8 @@ dialog .actions { justify-content: flex-end; margin-top: 22px; }
   .tab.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .latency-info { margin-left: 12px; flex-shrink: 0; }
 
-  main { margin: 12px auto; padding: 0 12px 32px; }
-  .tab-content { padding: 16px 14px 20px; }
+  main { margin: 0; padding: 14px 12px 32px; }
+  .tab-content { padding: 2px 0 0; }
 
   /* 触控目标 ≥ 42px */
   .btn { min-height: 42px; padding: 9px 16px; font-size: 14px; border-radius: 11px; }
@@ -740,7 +808,6 @@ dialog .actions { justify-content: flex-end; margin-top: 22px; }
   .status-card-editable::after { top: 10px; right: 10px; }
 
   /* 占位符表可横滑 */
-  .placeholder-fold { overflow-x: auto; }
   .placeholder-table { min-width: 560px; }
 
   /* 优先级列表 */
