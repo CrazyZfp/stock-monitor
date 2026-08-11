@@ -1329,7 +1329,7 @@ async function loadStatus() {
   const s = await api('/api/status');
   const grid = $('#status-grid');
   const cards = [
-    ['运行中', s.running ? '✅ 是' : '❌ 否'],
+    ['运行中', s.running ? '是' : '否', s.running ? 'ok' : 'bad'],
     ['检查次数', s.check_count],
     ['告警次数', s.alert_count],
     ['监控股票数', s.stocks.length],
@@ -1342,10 +1342,10 @@ async function loadStatus() {
     ['封单将尽阈值', `${s.limit_seal_exhaust_seconds}s · ${s.limit_seal_exhaust_samples}轮询`],
     ['配置文件', s.config_path],
   ];
-  grid.innerHTML = cards.map(([label, value]) => `
+  grid.innerHTML = cards.map(([label, value, cls]) => `
     <div class="status-card">
       <div class="label">${escapeHtml(label)}</div>
-      <div class="value">${escapeHtml(String(value))}</div>
+      <div class="value ${cls || ''}">${escapeHtml(String(value))}</div>
     </div>`).join('');
   if (s.last_error) {
     const err = document.createElement('div');

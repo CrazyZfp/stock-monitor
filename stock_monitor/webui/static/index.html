@@ -3,15 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#0f172a">
-<title>Stock Monitor Admin</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%231f2937'/%3E%3Cpath d='M6 24 L12 16 L18 20 L26 8' stroke='%23dc2626' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='26' cy='8' r='2' fill='%23dc2626'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/style.css?v=2">
+<meta name="theme-color" content="#0b0f17">
+<meta name="description" content="Stock Monitor — 股票 / 基金 / 合约监控告警管理台">
+<title>Stock Monitor</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23101624'/%3E%3Cpath d='M6 24 L12 16 L18 20 L26 8' stroke='%23f0b429' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='26' cy='8' r='2.2' fill='%23f0b429'/%3E%3C/svg%3E">
+<link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/outfit-latin-600-normal.woff2">
+<link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/jetbrains-mono-latin-500-normal.woff2">
+<link rel="stylesheet" href="/style.css?v=3">
 </head>
 <body>
+<a class="skip-link" href="#main">跳到主内容</a>
 <header>
   <div class="brand">
-    <span class="logo"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="4" fill="#1f2937"/><path d="M6 24 L12 16 L18 20 L26 8" stroke="#dc2626" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="26" cy="8" r="2" fill="#dc2626"/></svg></span>
+    <span class="logo"><svg width="26" height="26" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#101624"/><path d="M6 24 L12 16 L18 20 L26 8" stroke="#f0b429" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="26" cy="8" r="2.2" fill="#f0b429"/></svg></span>
     <h1>Stock Monitor</h1>
   </div>
   <nav class="tabs">
@@ -28,7 +32,7 @@
   </nav>
 </header>
 
-<main>
+<main id="main">
   <!-- ====== 监控股票 ====== -->
   <section id="tab-stocks" class="tab-content active">
     <div class="toolbar">
@@ -54,7 +58,7 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="hint" id="stocks-empty" hidden>暂无监控股票，点击"新增股票"开始</p>
+    <p class="empty-hint" id="stocks-empty" hidden>暂无监控股票，点击"新增股票"开始</p>
   </section>
 
   <!-- ====== 监控基金 ====== -->
@@ -79,7 +83,7 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="hint" id="funds-empty" hidden>暂无监控基金，点击"新增基金"开始</p>
+    <p class="empty-hint" id="funds-empty" hidden>暂无监控基金，点击"新增基金"开始</p>
   </section>
 
   <!-- ====== 监控合约 ====== -->
@@ -105,7 +109,7 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="hint" id="cryptos-empty" hidden>暂无监控合约，点击"新增合约"开始</p>
+    <p class="empty-hint" id="cryptos-empty" hidden>暂无监控合约，点击"新增合约"开始</p>
   </section>
 
   <!-- ====== 模板 ====== -->
@@ -670,6 +674,6 @@
   </form>
 </dialog>
 
-<script src="/app.js?v=6"></script>
+<script src="/app.js?v=7"></script>
 </body>
 </html>
