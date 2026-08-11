@@ -145,27 +145,27 @@ function renderStocks() {
     const q = s.quote || {};
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><code>${escapeHtml(s.code)}</code></td>
-      <td>${escapeHtml(s.name)}</td>
-      <td>${s.nickname ? escapeHtml(s.nickname) : '<span class="muted">—</span>'}</td>
-      <td class="${priceCellClass(q.change_percent)}">
+      <td data-label="代码"><code>${escapeHtml(s.code)}</code></td>
+      <td data-label="名称">${escapeHtml(s.name)}</td>
+      <td data-label="昵称">${s.nickname ? escapeHtml(s.nickname) : '<span class="muted">—</span>'}</td>
+      <td data-label="报价" class="${priceCellClass(q.change_percent)}">
         <div class="quote-price">${fmtPrice(q.price)}</div>
         <div class="quote-change">${fmtChange(q.change_percent)}</div>
       </td>
-      <td>${profitLossHtml(s.position_cost, q.price)}</td>
-      <td class="${q.surge_change != null ? priceCellClass(q.surge_change) : ''}" title="${q.surge_change != null ? `基准价: ${fmtPrice(q.surge_base_price)} @ ${new Date(q.surge_base_time * 1000).toLocaleString()}` : ''}">
+      <td data-label="盈亏">${profitLossHtml(s.position_cost, q.price)}</td>
+      <td data-label="当前涨速" class="${q.surge_change != null ? priceCellClass(q.surge_change) : ''}" title="${q.surge_change != null ? `基准价: ${fmtPrice(q.surge_base_price)} @ ${new Date(q.surge_base_time * 1000).toLocaleString()}` : ''}">
         ${q.surge_change != null ? fmtChange(q.surge_change) : '—'}
       </td>
-      <td class="limit-cell ${limitCellClass(q.limit_status)}" title="${limitTitle(q)}">
+      <td data-label="涨跌停" class="limit-cell ${limitCellClass(q.limit_status)}" title="${limitTitle(q)}">
         ${renderLimit(q)}
       </td>
-      <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
-      <td><label class="switch"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-code="${escapeHtml(s.code)}" class="toggle"><span class="slider"></span></label></td>
-      <td>
+      <td data-label="时间">${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
+      <td data-label="启用"><label class="switch"><input type="checkbox" ${s.enabled ? 'checked' : ''} data-code="${escapeHtml(s.code)}" class="toggle"><span class="slider"></span></label></td>
+      <td data-label="操作">
         <button class="btn" data-edit="${escapeHtml(s.code)}">编辑</button>
         <button class="btn btn-danger" data-del="${escapeHtml(s.code)}">删除</button>
       </td>
-      <td class="t-events-cell" data-tcode="${escapeHtml(s.code)}">
+      <td data-label="做T" class="t-events-cell" data-tcode="${escapeHtml(s.code)}">
         <div class="t-btns">
           <button class="btn btn-sm btn-t-s ${s.t_s_enabled === false ? 'btn-t-disabled' : ''}" data-tadd="${escapeHtml(s.code)}" data-ttype="S" ${s.t_s_enabled === false ? 'disabled' : ''}>S</button>
           <button class="btn btn-sm btn-t-b ${s.t_b_enabled === false ? 'btn-t-disabled' : ''}" data-tadd="${escapeHtml(s.code)}" data-ttype="B" ${s.t_b_enabled === false ? 'disabled' : ''}>B</button>
@@ -330,18 +330,18 @@ function renderFunds() {
     const q = f.quote || {};
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><code>${escapeHtml(f.code)}</code></td>
-      <td>${escapeHtml(f.name)}</td>
-      <td>${escapeHtml(f.nickname || '—')}</td>
-      <td class="${priceCellClass(q.change_percent)}">
+      <td data-label="代码"><code>${escapeHtml(f.code)}</code></td>
+      <td data-label="名称">${escapeHtml(f.name)}</td>
+      <td data-label="昵称">${escapeHtml(f.nickname || '—')}</td>
+      <td data-label="净值" class="${priceCellClass(q.change_percent)}">
         ${q.estimated_nav == null
           ? '<div class="quote-price muted">暂无盘中估值</div><div class="quote-change">—</div>'
           : `<div class="quote-price">${fmtPrice(q.estimated_nav)}</div><div class="quote-change">${fmtChange(q.change_percent)}</div>`}
       </td>
-      <td>${profitLossHtml(f.position_cost, q.estimated_nav)}</td>
-      <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : (q.nav != null ? '净值 ' + fmtPrice(q.nav) : '—')}</td>
-      <td><label class="switch"><input type="checkbox" ${f.enabled ? 'checked' : ''} data-code="${escapeHtml(f.code)}" class="toggle-fund"><span class="slider"></span></label></td>
-      <td>
+      <td data-label="盈亏">${profitLossHtml(f.position_cost, q.estimated_nav)}</td>
+      <td data-label="时间">${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : (q.nav != null ? '净值 ' + fmtPrice(q.nav) : '—')}</td>
+      <td data-label="启用"><label class="switch"><input type="checkbox" ${f.enabled ? 'checked' : ''} data-code="${escapeHtml(f.code)}" class="toggle-fund"><span class="slider"></span></label></td>
+      <td data-label="操作">
         <button class="btn" data-fedit="${escapeHtml(f.code)}">编辑</button>
         <button class="btn btn-danger" data-fdel="${escapeHtml(f.code)}">删除</button>
       </td>`;
@@ -390,21 +390,21 @@ function renderCryptos() {
     const prec = q.price_precision != null ? q.price_precision : 2;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><code>${escapeHtml(c.code)}</code></td>
-      <td>${escapeHtml(c.name)}</td>
-      <td>${c.nickname ? escapeHtml(c.nickname) : '<span class="muted">—</span>'}</td>
-      <td class="${priceCellClass(q.change_percent)}">
+      <td data-label="代码"><code>${escapeHtml(c.code)}</code></td>
+      <td data-label="名称">${escapeHtml(c.name)}</td>
+      <td data-label="昵称">${c.nickname ? escapeHtml(c.nickname) : '<span class="muted">—</span>'}</td>
+      <td data-label="报价" class="${priceCellClass(q.change_percent)}">
         <div class="quote-price">${fmtPriceP(q.price, prec)}</div>
         <div class="quote-change">${fmtChange(q.change_percent)}</div>
       </td>
-      <td>${profitLossHtml(c.position_cost, q.price, c.direction, c.leverage)}</td>
-      <td>${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
-      <td><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''} data-code="${escapeHtml(c.code)}" class="toggle-crypto"><span class="slider"></span></label></td>
-      <td>
+      <td data-label="盈亏">${profitLossHtml(c.position_cost, q.price, c.direction, c.leverage)}</td>
+      <td data-label="时间">${q.as_of ? new Date(q.as_of * 1000).toLocaleString() : '—'}</td>
+      <td data-label="启用"><label class="switch"><input type="checkbox" ${c.enabled ? 'checked' : ''} data-code="${escapeHtml(c.code)}" class="toggle-crypto"><span class="slider"></span></label></td>
+      <td data-label="操作">
         <button class="btn" data-cedit="${escapeHtml(c.code)}">编辑</button>
         <button class="btn btn-danger" data-cdel="${escapeHtml(c.code)}">删除</button>
       </td>
-      <td class="t-events-cell" data-tcode="${escapeHtml(c.code)}">
+      <td data-label="做T" class="t-events-cell" data-tcode="${escapeHtml(c.code)}">
         <div class="t-btns">
           <button class="btn btn-sm btn-t-s ${c.t_s_enabled === false ? 'btn-t-disabled' : ''}" data-tadd="${escapeHtml(c.code)}" data-ttype="S" data-tsource="crypto" ${c.t_s_enabled === false ? 'disabled' : ''}>S</button>
           <button class="btn btn-sm btn-t-b ${c.t_b_enabled === false ? 'btn-t-disabled' : ''}" data-tadd="${escapeHtml(c.code)}" data-ttype="B" data-tsource="crypto" ${c.t_b_enabled === false ? 'disabled' : ''}>B</button>
