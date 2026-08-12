@@ -588,14 +588,20 @@ dialog .actions { justify-content: flex-end; margin-top: 22px; }
 .channel-radio { display: inline-flex; align-items: center; gap: 6px; margin-right: 18px; font-size: 14px; cursor: pointer; }
 .channel-radio input { margin: 0; accent-color: var(--accent); }
 
-/* 优先级排序 */
+/* 通道与优先级（整合列表） */
 .priority-list { display: flex; flex-direction: column; gap: 6px; max-width: 340px; }
 .priority-item {
-  display: flex; align-items: center; gap: 10px; padding: 7px 12px;
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  transition: border-color .15s;
 }
-.priority-item .priority-handle { color: var(--text-3); cursor: grab; font-size: 14px; }
-.priority-item span:not(.priority-handle) { flex: 1; font-size: 13px; }
+.priority-item:hover { border-color: var(--border-2); }
+.priority-enable {
+  display: inline-flex; align-items: center; gap: 8px;
+  flex: 1; font-size: 13px; font-weight: 500; color: #e7ecf4;
+  cursor: pointer; user-select: none;
+}
+.priority-enable input { width: auto; margin: 0; accent-color: var(--accent); }
 .priority-item .btn-priority-up, .priority-item .btn-priority-down { font-size: 11px; padding: 2px 8px; }
 
 /* ===== 做T ===== */

@@ -1220,22 +1220,18 @@ async function loadNotifySettings() {
   const r = await api('/api/settings/notify');
   // 模式
   document.querySelectorAll('input[name="notify_mode"]').forEach(rd => rd.checked = rd.value === r.mode);
-  // 通道开关
+  // 通道开关 + 优先级（整合为可排序列表）
   const ch = r.channels || {};
-  document.querySelector('input[name="ch_dingding"]').checked = !!ch.dingding;
-  document.querySelector('input[name="ch_email"]').checked = !!ch.email;
-  // 优先级
-  renderPriorityList(r.priority || ['dingding', 'email']);
+  renderPriorityList(r.priority || ['dingding', 'email'], ch);
 }
 
-function renderPriorityList(priority) {
+function renderPriorityList(priority, channels = {}) {
   const list = $('#priority-list');
   list.innerHTML = priority.map(ch => `
     <div class="priority-item" data-channel="${ch}">
-      <span class="priority-handle">⋮⋮</span>
-      <span>${CHANNEL_LABELS[ch] || ch}</span>
-      <button type="button" class="btn btn-sm btn-priority-up">↑</button>
-      <button type="button" class="btn btn-sm btn-priority-down">↓</button>
+      <label class="priority-enable"><input type="checkbox" name="ch_${ch}" ${channels[ch] ? 'checked' : ''}> ${CHANNEL_LABELS[ch] || ch}</label>
+      <button type="button" class="btn btn-sm btn-priority-up" title="上移提高优先级">↑</button>
+      <button type="button" class="btn btn-sm btn-priority-down" title="下移降低优先级">↓</button>
     </div>`).join('');
 }
 
@@ -1259,10 +1255,8 @@ $('#priority-list').addEventListener('click', (e) => {
 // 保存通知设置
 $('#btn-save-notify-settings').addEventListener('click', async () => {
   const mode = document.querySelector('input[name="notify_mode"]:checked')?.value;
-  const channels = {
-    dingding: document.querySelector('input[name="ch_dingding"]').checked,
-    email: document.querySelector('input[name="ch_email"]').checked,
-  };
+  const channels = {};
+  $$('#priority-list input[type="checkbox"]').forEach(cb => { channels[cb.name.slice(3)] = cb.checked; });
   const priority = getPriorityOrder();
   try {
     await api('/api/settings/notify', {

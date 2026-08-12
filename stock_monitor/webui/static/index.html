@@ -318,18 +318,8 @@
           </div>
         </div>
         <div class="form-row">
-          <label>启用通道</label>
-          <div class="form-row-checkbox">
-            <label class="channel-radio"><input type="checkbox" name="ch_dingding" checked> 钉钉</label>
-            <label class="channel-radio"><input type="checkbox" name="ch_email"> 邮箱</label>
-          </div>
-        </div>
-      </div>
-      <div class="form-row">
-        <label>优先级（单渠道模式下生效，上方为最高）</label>
-        <div id="priority-list" class="priority-list">
-          <div class="priority-item" data-channel="dingding"><span class="priority-handle">⋮⋮</span><span>钉钉</span><button type="button" class="btn btn-sm btn-priority-up">↑</button><button type="button" class="btn btn-sm btn-priority-down">↓</button></div>
-          <div class="priority-item" data-channel="email"><span class="priority-handle">⋮⋮</span><span>邮箱</span><button type="button" class="btn btn-sm btn-priority-up">↑</button><button type="button" class="btn btn-sm btn-priority-down">↓</button></div>
+          <label>通道与优先级（勾选启用，顺序即优先级，上方优先）</label>
+          <div id="priority-list" class="priority-list"></div>
         </div>
       </div>
       <div class="actions">
@@ -686,6 +676,6 @@
 </dialog>
 
 
-<script src="/app.js?v=10"></script>
+<script src="/app.js?v=11"></script>
 </body>
 </html>
