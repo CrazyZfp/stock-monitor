@@ -1277,6 +1277,7 @@ async function loadWebhook() {
   const r = await api('/api/settings/webhook');
   const form = $('#webhook-form');
   form.elements.webhook.placeholder = r.set ? '已设置 (输入新 URL 覆盖)' : 'https://oapi.dingtalk.com/robot/send?access_token=...';
+  form.elements.keyword.value = r.keyword || '';
   form.elements.at_mobiles.value = (r.at_mobiles || []).join(', ');
   form.elements.at_user_ids.value = (r.at_user_ids || []).join(', ');
 }
@@ -1294,6 +1295,7 @@ $('#webhook-form').addEventListener('submit', async (e) => {
       method: 'PUT',
       body: JSON.stringify({
         webhook: v,
+        keyword: form.elements.keyword.value,
         at_mobiles: parseAtList(form.elements.at_mobiles.value),
         at_user_ids: parseAtList(form.elements.at_user_ids.value),
       }),

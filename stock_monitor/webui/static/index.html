@@ -23,7 +23,7 @@
     <button class="tab" data-tab="funds">监控基金</button>
     <button class="tab" data-tab="cryptos">监控合约</button>
     <button class="tab" data-tab="templates">通知模板</button>
-    <button class="tab" data-tab="webhook">Webhook</button>
+    <button class="tab" data-tab="webhook">通知渠道</button>
     <button class="tab" data-tab="status">状态</button>
     <div class="latency-info">
       <span class="latency-dot" id="latency-dot"></span>
@@ -346,6 +346,10 @@
         <div class="form-row">
           <label>钉钉机器人 Webhook URL</label>
           <input type="password" name="webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label>关键词（可选）</label>
+          <input name="keyword" placeholder="非空时，每条通知开头会拼接该关键词">
         </div>
         <div class="form-grid">
           <div class="form-row">

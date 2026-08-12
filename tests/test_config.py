@@ -77,12 +77,14 @@ class TestConfig:
         """测试 Config 序列化与反序列化，验证字段和模板默认值"""
         cfg = Config(
             dingding_webhook="https://x",
+            dingding_keyword="【预警】",
             disguise_templates={"price_high": ["🟢 {name}"]},
             stocks=[StockConfig(code="sz1", name="A")],
         )
         d = cfg.to_dict()
         cfg2 = Config.from_dict(d)
         assert cfg2.dingding_webhook == "https://x"
+        assert cfg2.dingding_keyword == "【预警】"
         # 加载时自动合并 DEFAULT_TEMPLATES，确保 daily_up/daily_down 等新类型有默认值
         assert cfg2.disguise_templates["price_high"] == ["🟢 {name}"]
         assert "daily_up" in cfg2.disguise_templates

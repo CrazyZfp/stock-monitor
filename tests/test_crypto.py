@@ -513,6 +513,28 @@ class TestDoSend:
         assert "发送成功" in caplog.text
         assert "被拒" not in caplog.text
 
+    def test_keyword_prepended_to_content(self, m: StockMonitor):
+        m.dingding_keyword = "【预警】"
+        with patch("stock_monitor.core.requests.post") as mock_post:
+            resp = MagicMock(status_code=200)
+            resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
+            mock_post.return_value = resp
+            assert m._do_send("test message")
+        payload = mock_post.call_args.kwargs["data"]
+        import json as _json
+        assert _json.loads(payload)["text"]["content"] == "【预警】test message"
+
+    def test_no_keyword_when_empty(self, m: StockMonitor):
+        m.dingding_keyword = ""
+        with patch("stock_monitor.core.requests.post") as mock_post:
+            resp = MagicMock(status_code=200)
+            resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
+            mock_post.return_value = resp
+            assert m._do_send("test message")
+        payload = mock_post.call_args.kwargs["data"]
+        import json as _json
+        assert _json.loads(payload)["text"]["content"] == "test message"
+
     def test_rejected_when_errcode_nonzero(self, m: StockMonitor, caplog):
         with patch("stock_monitor.core.requests.post") as mock_post:
             resp = MagicMock(status_code=200)

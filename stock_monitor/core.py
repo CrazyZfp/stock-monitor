@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 class StockMonitor:
     def __init__(self, dingding_webhook: str, at_mobiles: list[str] | None = None, at_user_ids: list[str] | None = None,
-                 *, notify_mode: str = "single",
+                 *, dingding_keyword: str = "",
+                 notify_mode: str = "single",
                  notify_channels: dict[str, bool] | None = None,
                  notify_priority: list[str] | None = None,
                  email_smtp_host: str = "", email_smtp_port: int = 465,
@@ -34,6 +35,7 @@ class StockMonitor:
 
         Args:
             dingding_webhook: 钉钉群机器人的Webhook地址
+            dingding_keyword: 非空时，钉钉每条通知开头拼接该关键词
             at_mobiles: 通知时 @ 的手机号列表
             at_user_ids: 通知时 @ 的用户 ID 列表
             notify_mode: "multi"(全发) | "single"(优先级回退)
@@ -45,6 +47,7 @@ class StockMonitor:
         self.notify_channels = dict(notify_channels or {"dingding": True, "email": False})
         self.notify_priority = list(notify_priority or ["dingding", "email"])
         self.dingding_webhook = dingding_webhook
+        self.dingding_keyword = dingding_keyword
         # 邮箱配置
         self.email_smtp_host = email_smtp_host
         self.email_smtp_port = email_smtp_port
@@ -904,6 +907,9 @@ class StockMonitor:
         return self._do_send(message)
 
     def _do_send(self, message: str) -> bool:
+        content = message
+        if self.dingding_keyword:
+            content = self.dingding_keyword + content
         at_mobiles = self.at_mobiles if self.at_mobiles else None
         at_user_ids = self.at_user_ids if self.at_user_ids else None
         try:
@@ -915,7 +921,7 @@ class StockMonitor:
             payload = {
                 "msgtype": "text",
                 "text": {
-                    "content": message
+                    "content": content
                 },
                 "at": at_payload,
             }

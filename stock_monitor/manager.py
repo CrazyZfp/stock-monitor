@@ -202,11 +202,14 @@ class MonitorManager:
             self.store.save(cfg)
         self._apply_runtime_changes()
 
-    def update_webhook(self, webhook: str, at_mobiles: list[str] | None = None, at_user_ids: list[str] | None = None):
+    def update_webhook(self, webhook: str, at_mobiles: list[str] | None = None, at_user_ids: list[str] | None = None,
+                       keyword: str | None = None):
         """更新钉钉配置。保存后自动开启钉钉通道（不改动模式）。"""
         with self._lock:
             cfg = self.store.get()
             cfg.dingding_webhook = webhook
+            if keyword is not None:
+                cfg.dingding_keyword = keyword
             if at_mobiles is not None:
                 cfg.at_mobiles = list(at_mobiles)
             if at_user_ids is not None:
@@ -301,6 +304,7 @@ class MonitorManager:
             result["notify_channels"] = dict(cfg.notify_channels)
             result["notify_priority"] = list(cfg.notify_priority)
             result["dingding_webhook"] = cfg.dingding_webhook
+            result["dingding_keyword"] = cfg.dingding_keyword
             result["at_mobiles"] = list(cfg.at_mobiles)
             result["at_user_ids"] = list(cfg.at_user_ids)
             result["email_smtp_host"] = cfg.email_smtp_host
@@ -345,6 +349,8 @@ class MonitorManager:
                     cfg.notify_priority = valid
                 if "dingding_webhook" in data:
                     cfg.dingding_webhook = data["dingding_webhook"]
+                if "dingding_keyword" in data:
+                    cfg.dingding_keyword = data["dingding_keyword"]
                 if "at_mobiles" in data:
                     cfg.at_mobiles = list(data["at_mobiles"])
                 if "at_user_ids" in data:
@@ -657,6 +663,7 @@ class MonitorManager:
             cfg.dingding_webhook,
             at_mobiles=cfg.at_mobiles,
             at_user_ids=cfg.at_user_ids,
+            dingding_keyword=cfg.dingding_keyword,
             notify_mode=cfg.notify_mode,
             notify_channels=dict(cfg.notify_channels),
             notify_priority=list(cfg.notify_priority),
@@ -851,6 +858,7 @@ class MonitorManager:
             self.monitor.notify_channels = dict(cfg.notify_channels)
             self.monitor.notify_priority = list(cfg.notify_priority)
             self.monitor.dingding_webhook = cfg.dingding_webhook
+            self.monitor.dingding_keyword = cfg.dingding_keyword
             self.monitor.at_mobiles = list(cfg.at_mobiles)
             self.monitor.at_user_ids = list(cfg.at_user_ids)
             self.monitor.email_smtp_host = cfg.email_smtp_host

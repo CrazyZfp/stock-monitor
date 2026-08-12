@@ -279,6 +279,7 @@ class Config:
     notify_priority: list[str] = field(default_factory=lambda: list(DEFAULT_NOTIFY_PRIORITY))
     # 钉钉
     dingding_webhook: str = ""
+    dingding_keyword: str = ""               # 非空时，钉钉每条通知开头拼接该关键词
     at_mobiles: list[str] = field(default_factory=list)
     at_user_ids: list[str] = field(default_factory=list)
     # 邮箱（SMTP）
@@ -308,6 +309,7 @@ class Config:
             "notify_channels": dict(self.notify_channels),
             "notify_priority": list(self.notify_priority),
             "dingding_webhook": self.dingding_webhook,
+            "dingding_keyword": self.dingding_keyword,
             "at_mobiles": list(self.at_mobiles),
             "at_user_ids": list(self.at_user_ids),
             "email_smtp_host": self.email_smtp_host,
@@ -365,6 +367,7 @@ class Config:
             notify_channels=notify_channels,
             notify_priority=notify_priority,
             dingding_webhook=d.get("dingding_webhook", ""),
+            dingding_keyword=d.get("dingding_keyword", ""),
             at_mobiles=list(d.get("at_mobiles", [])),
             at_user_ids=list(d.get("at_user_ids", [])),
             email_smtp_host=d.get("email_smtp_host", ""),

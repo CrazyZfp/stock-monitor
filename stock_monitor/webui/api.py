@@ -95,6 +95,7 @@ class CryptoPatch(BaseModel):
 
 class WebhookIn(BaseModel):
     webhook: str = ""
+    keyword: str = ""
     at_mobiles: list[str] = Field(default_factory=list)
     at_user_ids: list[str] = Field(default_factory=list)
 
@@ -700,13 +701,15 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
         return {
             "webhook": _mask_webhook(cfg.dingding_webhook),
             "set": bool(cfg.dingding_webhook),
+            "keyword": cfg.dingding_keyword,
             "at_mobiles": list(cfg.at_mobiles),
             "at_user_ids": list(cfg.at_user_ids),
         }
 
     @router.put("/settings/webhook")
     def put_webhook(payload: WebhookIn):
-        manager.update_webhook(payload.webhook, at_mobiles=payload.at_mobiles, at_user_ids=payload.at_user_ids)
+        manager.update_webhook(payload.webhook, at_mobiles=payload.at_mobiles, at_user_ids=payload.at_user_ids,
+                               keyword=payload.keyword)
         return {"ok": True}
 
     # ----- 邮箱 -----
