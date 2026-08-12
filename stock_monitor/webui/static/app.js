@@ -1060,15 +1060,25 @@ const TEMPLATE_GROUPS = [
   ['做T与盈亏', ['t_sell', 't_buy', 'profit', 'loss']],
   ['涨跌停', ['limit_up', 'limit_up_broken', 'limit_up_low_seal', 'limit_up_exhaust', 'limit_down', 'limit_down_broken', 'limit_down_low_seal', 'limit_down_exhaust']],
 ];
+const MARKET_TEMPLATE_TYPES = {
+  stock: TEMPLATE_TYPES,
+  fund: ['daily_up', 'daily_down', 'retracement', 'bounce', 'profit', 'loss'],
+  crypto: ['price_high', 'price_low', 'daily_up', 'daily_down', 't_sell', 't_buy', 'profit', 'loss'],
+};
 const MARKETS = ['stock', 'fund', 'crypto'];
 let currentMarket = 'stock';
 let marketTemplatesData = { stock: {}, fund: {}, crypto: {} };
 
 function buildMarketFields() {
   const container = $('#market-templates-fields');
-  container.innerHTML = MARKETS.map(mkt => `
+  container.innerHTML = MARKETS.map(mkt => {
+    const supported = new Set(MARKET_TEMPLATE_TYPES[mkt] || TEMPLATE_TYPES);
+    const groups = TEMPLATE_GROUPS
+      .map(([gname, types]) => [gname, types.filter(t => supported.has(t))])
+      .filter(([, types]) => types.length > 0);
+    return `
     <div class="market-fields" data-market="${mkt}" hidden>
-      ${TEMPLATE_GROUPS.map(([gname, types]) => `
+      ${groups.map(([gname, types]) => `
         <section class="cfg-group">
           <h4 class="group-title">${gname}</h4>
           <div class="template-grid">
@@ -1083,7 +1093,8 @@ function buildMarketFields() {
               </div>`).join('')}
           </div>
         </section>`).join('')}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function loadTemplates() {
