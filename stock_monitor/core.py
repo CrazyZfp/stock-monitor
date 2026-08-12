@@ -864,9 +864,9 @@ class StockMonitor:
         message += '.'
         return message
     
-    def send_dingding_notification(self, message: str):
+    def send_dingding_notification(self, message: str) -> bool:
         """发送通知（向后兼容的别名）"""
-        self.send_notification(message)
+        return self.send_notification(message)
 
     def channel_ready(self, channel: str) -> bool:
         """通道是否已开启且配置完整可发送。"""
@@ -878,27 +878,33 @@ class StockMonitor:
             return bool(self.email_smtp_host and self.email_username and self.email_to_addrs)
         return False
 
-    def send_notification(self, message: str):
-        """发送通知。空消息丢弃；multi 模式全发，single 模式按优先级回退到首个成功。"""
+    def send_notification(self, message: str) -> bool:
+        """发送通知。空消息丢弃；multi 模式全发，single 模式按优先级回退到首个成功。
+
+        返回是否至少有一个通道送达（批量模式下入缓冲视为已送达，将随本轮一起发送）。
+        """
         if not message or not message.strip():
-            return
+            return False
         if self._batch_mode:
             self._alert_buffer.append(message)
-            return
+            return True
         if self.notify_mode == "multi":
+            ok = False
             for ch in self.notify_priority:
                 if self.channel_ready(ch):
-                    self._dispatch(ch, message)
-            return
+                    if self._dispatch(ch, message):
+                        ok = True
+            return ok
         # single 模式：按优先级找首个开启且完整的通道，失败回退下一个，直到成功
         for ch in self.notify_priority:
             if not self.channel_ready(ch):
                 continue
             ok = self._dispatch(ch, message)
             if ok:
-                return
+                return True
             logger.warning(f"通道 {ch} 发送失败，尝试回退到下一个通道")
         logger.error("所有通知通道均发送失败")
+        return False
 
     def _dispatch(self, channel: str, message: str) -> bool:
         """实际发送到指定通道，返回是否成功。"""

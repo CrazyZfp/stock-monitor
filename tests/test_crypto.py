@@ -283,6 +283,41 @@ class TestNotifyChannelDispatch:
         m.send_notification("   \n  ")
         assert calls == []
 
+    def test_send_notification_returns_false_when_no_channel_ready(self):
+        """无可用通道时返回 False（供测试消息等判断真实送达）"""
+        m = self._make(notify_channels={"dingding": False, "email": False})
+        assert m.send_notification("hello") is False
+
+    def test_send_notification_returns_false_when_all_fail(self):
+        """single 模式全部通道失败时返回 False"""
+        m = self._make(notify_channels={"dingding": True, "email": True},
+                       notify_priority=["dingding", "email"],
+                       email_smtp_host="smtp.x", email_username="a@b", email_to_addrs=["c@d"])
+        m._do_send = lambda msg: False
+        m._send_email = lambda msg: False
+        assert m.send_notification("hello") is False
+
+    def test_send_notification_returns_true_on_delivery(self):
+        """有通道送达时返回 True"""
+        m = self._make()
+        m._do_send = lambda msg: True
+        assert m.send_notification("hello") is True
+
+    def test_send_notification_returns_false_in_multi_mode_when_all_fail(self):
+        """multi 模式全部通道失败时返回 False"""
+        m = self._make(notify_mode="multi",
+                       notify_channels={"dingding": True, "email": False})
+        m._do_send = lambda msg: False
+        assert m.send_notification("hello") is False
+
+    def test_send_notification_batch_mode_buffers_and_returns_true(self):
+        """批量模式下入缓冲视为已送达，返回 True"""
+        m = self._make()
+        m._batch_mode = True
+        m._do_send = lambda msg: (_ for _ in ()).throw(AssertionError("不应直接发送"))
+        assert m.send_notification("a") is True
+        assert m._alert_buffer == ["a"]
+
     def test_batch_mode_buffers(self):
         """batch 模式下消息进缓冲区而非直接发送"""
         m = self._make()

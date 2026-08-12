@@ -52,6 +52,14 @@ class TestMonitorManagerCRUD:
         mgr.update_webhook("https://new")
         assert mgr.get_config().dingding_webhook == "https://new"
 
+    def test_update_webhook_empty_keeps_existing(self, mgr: MonitorManager):
+        """空 webhook 提交（如只改关键词）不得覆盖已配置的 webhook"""
+        mgr.update_webhook("https://keep")
+        mgr.update_webhook("", keyword="【预警】")
+        cfg = mgr.get_config()
+        assert cfg.dingding_webhook == "https://keep"
+        assert cfg.dingding_keyword == "【预警】"
+
     def test_update_templates(self, mgr: MonitorManager):
         """更新通知模板后配置持久化"""
         mgr.update_templates(global_templates={"price_high": ["TEST {name}"]})

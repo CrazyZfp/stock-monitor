@@ -1284,18 +1284,20 @@ $('#webhook-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const v = form.elements.webhook.value;
+  const kw = form.elements.keyword.value;
   try {
     await api('/api/settings/webhook', {
       method: 'PUT',
       body: JSON.stringify({
         webhook: v,
-        keyword: form.elements.keyword.value,
+        keyword: kw,
         at_mobiles: parseAtList(form.elements.at_mobiles.value),
         at_user_ids: parseAtList(form.elements.at_user_ids.value),
       }),
     });
     toast('钉钉配置已保存（已开启钉钉通道）');
     form.reset();
+    form.elements.keyword.value = kw;
     loadWebhook();
     loadNotifySettings();
   } catch (err) { toast('保存失败: ' + err.message, 'error'); }

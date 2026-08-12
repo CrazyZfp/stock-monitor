@@ -771,7 +771,7 @@ def register_routes(app, manager: MonitorManager, store: ConfigStore):
     @router.post("/actions/test-notify")
     def test_notify(payload: TestNotifyIn = TestNotifyIn()):
         if not manager.test_notify(payload.message):
-            raise HTTPException(400, "监控器未启动或通知通道未配置")
+            raise HTTPException(400, "监控器未启动或通知发送失败：请检查通知渠道配置")
         return {"ok": True}
 
     @router.post("/actions/sync-holidays")

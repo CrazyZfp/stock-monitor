@@ -136,6 +136,20 @@ class TestWebhookAPI:
         assert "secret" not in g["webhook"]
         assert "****" in g["webhook"]
 
+    def test_put_empty_webhook_keeps_existing(self, client: TestClient):
+        """空 webhook 提交（如只改关键词）不得清空已配置的 webhook"""
+        client.put("/api/settings/webhook", json={"webhook": "https://example.com/x?access_token=keep"})
+        r = client.put("/api/settings/webhook", json={"webhook": "", "keyword": "【预警】"})
+        assert r.status_code == 200
+        g = client.get("/api/settings/webhook").json()
+        assert g["set"] is True
+        assert g["keyword"] == "【预警】"
+
+    def test_test_notify_fails_when_no_channel_ready(self, client: TestClient):
+        """无可用通知通道时测试消息应返回 400 而非虚假成功"""
+        r = client.post("/api/actions/test-notify", json={"message": "x"})
+        assert r.status_code == 400
+
 
 class TestConfigAPI:
     def test_get_masks_webhook(self, client: TestClient):

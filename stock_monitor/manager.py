@@ -204,17 +204,18 @@ class MonitorManager:
 
     def update_webhook(self, webhook: str, at_mobiles: list[str] | None = None, at_user_ids: list[str] | None = None,
                        keyword: str | None = None):
-        """更新钉钉配置。保存后自动开启钉钉通道（不改动模式）。"""
+        """更新钉钉配置。保存后自动开启钉钉通道（不改动模式）。webhook 为空表示保留现有值。"""
         with self._lock:
             cfg = self.store.get()
-            cfg.dingding_webhook = webhook
+            if webhook:
+                cfg.dingding_webhook = webhook
             if keyword is not None:
                 cfg.dingding_keyword = keyword
             if at_mobiles is not None:
                 cfg.at_mobiles = list(at_mobiles)
             if at_user_ids is not None:
                 cfg.at_user_ids = list(at_user_ids)
-            if webhook:
+            if webhook and cfg.dingding_webhook:
                 cfg.notify_channels["dingding"] = True
             self.store.save(cfg)
         self._apply_runtime_changes()
@@ -403,13 +404,12 @@ class MonitorManager:
         return result
 
     def test_notify(self, message: str = "") -> bool:
-        """发一条测试消息到 webhook（空字符串用默认文案）"""
+        """发一条测试消息（空字符串用默认文案），返回是否至少有一个通道送达。"""
         msg = (message or "").strip() or "🧪 stock-monitor 测试消息 - 来自 Web UI"
         with self._lock:
             if self.monitor is None:
                 return False
-            self.monitor.send_dingding_notification(msg)
-            return True
+            return self.monitor.send_dingding_notification(msg)
 
     def get_quotes(self) -> dict:
         """返回每只股票最新报价 + 当日涨跌幅 + 当前涨速（用 monitor 内存中的 price_history，不发 HTTP）"""
